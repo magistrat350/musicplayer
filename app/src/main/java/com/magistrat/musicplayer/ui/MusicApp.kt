@@ -17,6 +17,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.magistrat.musicplayer.update.Updater
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -53,10 +56,16 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         if (sharedUrl != null) goTab("download")
     }
 
+    // Beim Start auf neue App-Version pruefen
+    val context = LocalContext.current
+    val update by Updater.available.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { Updater.checkIfDue(context) }
+    update?.let { UpdateDialog(it) }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (route != "player") {
+            if (route != "player" && route != "queue") {
                 Column {
                     MiniPlayer(onOpen = { nav.navigate("player") { launchSingleTop = true } })
                     NavigationBar {
@@ -89,7 +98,10 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
             composable("audiobook/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) {
                 AudiobookDetailScreen(it.arguments?.getLong("id") ?: 0, onBack = { nav.popBackStack() })
             }
-            composable("player") { PlayerScreen(onClose = { nav.popBackStack() }) }
+            composable("player") {
+                PlayerScreen(onClose = { nav.popBackStack() }, onOpenQueue = { nav.navigate("queue") { launchSingleTop = true } })
+            }
+            composable("queue") { QueueScreen(onBack = { nav.popBackStack() }) }
         }
     }
 }

@@ -96,7 +96,12 @@ interface PlaylistDao {
 @Dao
 interface AudiobookDao {
     @Query(
-        "SELECT b.*, (SELECT COUNT(*) FROM chapters c WHERE c.bookId = b.id) AS chapterCount " +
+        "SELECT b.*, " +
+            "(SELECT COUNT(*) FROM chapters c WHERE c.bookId = b.id) AS chapterCount, " +
+            "(SELECT COALESCE(SUM(c.durationMs), 0) FROM chapters c WHERE c.bookId = b.id) AS totalMs, " +
+            "COALESCE((SELECT bm.positionMs + COALESCE((SELECT SUM(c2.durationMs) FROM chapters c2 " +
+            "   WHERE c2.bookId = b.id AND c2.position < (SELECT c3.position FROM chapters c3 WHERE c3.id = bm.itemId)), 0) " +
+            "  FROM bookmarks bm WHERE bm.sourceType = 'AUDIOBOOK' AND bm.sourceId = b.id AND bm.isAuto = 1 LIMIT 1), 0) AS listenedMs " +
             "FROM audiobooks b ORDER BY b.title COLLATE NOCASE"
     )
     fun allWithCount(): Flow<List<AudiobookWithCount>>
@@ -136,6 +141,16 @@ interface BookmarkDao {
 
     @Query("SELECT * FROM bookmarks WHERE sourceType = :type AND sourceId = :id AND isAuto = 0 ORDER BY createdAt DESC")
     fun manual(type: SourceType, id: Long): Flow<List<Bookmark>>
+
+    @Query(
+        "SELECT b.*, COALESCE(p.name, a.title) AS sourceTitle, COALESCE(p.coverPath, a.coverPath) AS sourceCover " +
+            "FROM bookmarks b " +
+            "LEFT JOIN playlists p ON b.sourceType = 'PLAYLIST' AND p.id = b.sourceId " +
+            "LEFT JOIN audiobooks a ON b.sourceType = 'AUDIOBOOK' AND a.id = b.sourceId " +
+            "WHERE b.isAuto = 1 AND (p.id IS NOT NULL OR a.id IS NOT NULL) " +
+            "ORDER BY b.createdAt DESC LIMIT 12"
+    )
+    fun recent(): Flow<List<RecentSource>>
 
     @Insert
     suspend fun insert(b: Bookmark): Long

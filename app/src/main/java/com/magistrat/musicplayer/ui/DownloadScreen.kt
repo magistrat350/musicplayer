@@ -1,6 +1,7 @@
 package com.magistrat.musicplayer.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,8 +19,10 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +53,7 @@ import androidx.work.WorkManager
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.download.YtdlUpdater
+import com.magistrat.musicplayer.update.Updater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +79,12 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
     var pickingPlaylist by remember { mutableStateOf(false) }
     var ytdlStatus by remember { mutableStateOf("") }
     var updating by remember { mutableStateOf(false) }
+    var wholePlaylist by remember { mutableStateOf(true) }
+    var appUpdateStatus by remember { mutableStateOf("") }
+    var checkingApp by remember { mutableStateOf(false) }
+    val isPlaylistLink = YoutubeDownloadWorker.isPlaylistUrl(url)
+    // Reine Playlist-Links: standardmaessig alles laden. Video-in-Playlist (z. B. Mix): nur das Video.
+    LaunchedEffect(url) { wholePlaylist = url.contains("/playlist") }
 
     LaunchedEffect(initialUrl) {
         if (initialUrl != null) {
@@ -117,9 +127,20 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             }
                         },
                     )
+                    if (isPlaylistLink) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { wholePlaylist = !wholePlaylist },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = wholePlaylist, onCheckedChange = { wholePlaylist = it })
+                            Text("Ganze YouTube-Playlist laden" + if (wholePlaylist && targetPlaylist == null) " (wird als neue Playlist angelegt)" else "")
+                        }
+                    }
                     OutlinedButton(onClick = { pickingPlaylist = true }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.AutoMirrored.Filled.QueueMusic, null)
-                        Text("  Danach zu Playlist: ${targetName ?: "keine"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("  Danach zu Playlist: ${targetName ?: if (isPlaylistLink && wholePlaylist) "neue" else "keine"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Button(
                         onClick = {
@@ -127,7 +148,7 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             if (link == null) {
                                 Toast.makeText(context, "Bitte einen gültigen Link eingeben", Toast.LENGTH_SHORT).show()
                             } else {
-                                YoutubeDownloadWorker.enqueue(context, link, targetPlaylist)
+                                YoutubeDownloadWorker.enqueue(context, link, targetPlaylist, fullPlaylist = isPlaylistLink && wholePlaylist)
                                 url = ""
                                 Toast.makeText(context, "Download gestartet", Toast.LENGTH_SHORT).show()
                             }
@@ -180,6 +201,30 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Text(
+                        "App-Version ${Updater.currentVersionName} (Build ${Updater.currentVersionCode})" +
+                            if (appUpdateStatus.isNotBlank()) " – $appUpdateStatus" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                    OutlinedButton(
+                        enabled = !checkingApp,
+                        onClick = {
+                            checkingApp = true
+                            scope.launch {
+                                appUpdateStatus = try {
+                                    if (Updater.checkNow() == null) "aktuell" else "Update gefunden"
+                                } catch (e: Exception) {
+                                    "Prüfung fehlgeschlagen"
+                                }
+                                checkingApp = false
+                            }
+                        },
+                    ) {
+                        Icon(Icons.Default.SystemUpdate, null)
+                        Text(if (checkingApp) "  Suche…" else "  Nach App-Updates suchen")
+                    }
                 }
             }
         }

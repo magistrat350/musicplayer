@@ -109,10 +109,13 @@ fun MediaRow(
     highlighted: Boolean = false,
     icon: ImageVector = Icons.Default.MusicNote,
     menu: List<Pair<String, () -> Unit>> = emptyList(),
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
-        Modifier
+        modifier
+            .background(MaterialTheme.colorScheme.surface)
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -148,6 +151,7 @@ fun MediaRow(
                 }
             }
         }
+        trailing?.invoke()
     }
 }
 

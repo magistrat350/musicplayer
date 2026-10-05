@@ -109,17 +109,40 @@ fun AudiobooksScreen(onOpen: (Long) -> Unit) {
                     EmptyHint("Noch keine Hörbücher.\nTippe auf +, um einen Ordner mit Kapiteln oder einzelne Dateien (mp3, m4b, …) hinzuzufügen.")
                 }
                 items(books, key = { it.book.id }) { b ->
-                    MediaRow(
-                        title = b.book.title,
-                        subtitle = listOf(b.book.author, "${b.chapterCount} Kapitel").filter { it.isNotBlank() }.joinToString(" · "),
-                        coverPath = b.book.coverPath,
-                        icon = Icons.AutoMirrored.Filled.MenuBook,
-                        onClick = { onOpen(b.book.id) },
-                    )
+                    val progress = if (b.totalMs > 0) (b.listenedMs.toFloat() / b.totalMs).coerceIn(0f, 1f) else 0f
+                    val progressText = when {
+                        b.listenedMs <= 0 -> "nicht begonnen"
+                        b.totalMs > 0 && b.listenedMs >= b.totalMs - 5_000 -> "fertig gehört ✓"
+                        b.totalMs > 0 -> "${(progress * 100).toInt()} % gehört, noch ${formatHours(b.totalMs - b.listenedMs)}"
+                        else -> "begonnen"
+                    }
+                    Column {
+                        MediaRow(
+                            title = b.book.title,
+                            subtitle = listOf(b.book.author, "${b.chapterCount} Kapitel", progressText).filter { it.isNotBlank() }.joinToString(" · "),
+                            coverPath = b.book.coverPath,
+                            icon = Icons.AutoMirrored.Filled.MenuBook,
+                            onClick = { onOpen(b.book.id) },
+                        )
+                        if (b.listenedMs > 0 && b.totalMs > 0) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 80.dp, end = 16.dp, bottom = 6.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/** z. B. "3:12 h" bzw. "45 min" */
+fun formatHours(ms: Long): String {
+    val totalMin = (ms.coerceAtLeast(0) / 60_000)
+    return if (totalMin >= 60) "%d:%02d h".format(totalMin / 60, totalMin % 60) else "$totalMin min"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

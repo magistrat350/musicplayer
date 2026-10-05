@@ -13,6 +13,8 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.MainActivity
+import com.magistrat.musicplayer.data.Bookmark
+import com.magistrat.musicplayer.data.SourceType
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -60,11 +62,26 @@ class PlaybackService : MediaSessionService() {
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
-                    // Komplett durchgehoert -> naechstes Mal wieder von vorne
-                    val key = ItemKey.decode(player.currentMediaItem?.mediaId) ?: return
+                    val item = player.currentMediaItem ?: return
+                    val key = ItemKey.decode(item.mediaId) ?: return
                     val app = App.instance
-                    app.appScope.launch {
-                        app.repo.bookmarks.auto(key.source.type, key.source.id)?.let { app.repo.bookmarks.delete(it) }
+                    if (key.source.type == SourceType.AUDIOBOOK) {
+                        // Hoerbuch fertig: Stand ans Ende setzen (zaehlt als 100 %, naechstes Mal geht's von vorne los)
+                        val bm = Bookmark(
+                            sourceType = key.source.type,
+                            sourceId = key.source.id,
+                            itemId = key.itemId,
+                            itemIndex = player.currentMediaItemIndex,
+                            itemTitle = item.mediaMetadata.title?.toString() ?: "",
+                            positionMs = player.duration.coerceAtLeast(0),
+                            isAuto = true,
+                        )
+                        app.appScope.launch { app.repo.bookmarks.upsertAuto(bm) }
+                    } else {
+                        // Playlist komplett durchgehoert -> naechstes Mal wieder von vorne
+                        app.appScope.launch {
+                            app.repo.bookmarks.auto(key.source.type, key.source.id)?.let { app.repo.bookmarks.delete(it) }
+                        }
                     }
                 }
             }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.data.SourceType
+import com.magistrat.musicplayer.data.Track
 import com.magistrat.musicplayer.player.Playback
 import com.magistrat.musicplayer.player.PlayerConnection
 import kotlinx.coroutines.launch
@@ -110,6 +113,29 @@ fun PlaylistDetailScreen(playlistId: Long, onBack: () -> Unit) {
     var deleting by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
 
+    // Lokale Reihenfolge fuer Drag & Drop; wird beim Loslassen gespeichert
+    val order = remember { mutableStateListOf<Track>() }
+    val listState = rememberLazyListState()
+    val dragState = rememberDragDropState(
+        listState = listState,
+        canDropOn = { (it as? String)?.startsWith("t_") == true },
+        onMove = { from, to ->
+            val fromIdx = order.indexOfFirst { "t_${it.id}" == from }
+            val toIdx = order.indexOfFirst { "t_${it.id}" == to }
+            if (fromIdx >= 0 && toIdx >= 0) order.add(toIdx, order.removeAt(fromIdx))
+        },
+        onDrop = {
+            val ids = order.map { it.id }
+            App.instance.appScope.launch { repo.playlists.setOrder(playlistId, ids) }
+        },
+    )
+    LaunchedEffect(tracks) {
+        if (dragState.draggingKey == null) {
+            order.clear()
+            order.addAll(tracks)
+        }
+    }
+
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val p = playlist
         if (uri != null && p != null) scope.launch { repo.setPlaylistCover(p, uri) }
@@ -132,7 +158,8 @@ fun PlaylistDetailScreen(playlistId: Long, onBack: () -> Unit) {
         LazyColumn(
             Modifier
                 .padding(padding)
-                .fillMaxSize()
+                .fillMaxSize(),
+            state = listState,
         ) {
             item(key = "header") {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -165,18 +192,21 @@ fun PlaylistDetailScreen(playlistId: Long, onBack: () -> Unit) {
             if (tracks.isEmpty()) {
                 item { EmptyHint("Diese Playlist ist leer. Füge über das Symbol oben Songs hinzu.") }
             }
-            itemsIndexed(tracks, key = { _, t -> "t_${t.id}" }) { index, t ->
+            itemsIndexed(order, key = { _, t -> "t_${t.id}" }) { index, t ->
+                val key = "t_${t.id}"
                 MediaRow(
                     title = t.title,
                     subtitle = t.artist,
                     coverPath = t.coverPath,
-                    highlighted = isCurrent && player.index == index,
+                    highlighted = isCurrent && player.itemId == t.id,
                     onClick = { scope.launch { Playback.playPlaylist(context, playlistId, index) } },
-                    menu = buildList<Pair<String, () -> Unit>> {
-                        if (index > 0) add("Nach oben" to { scope.launch { repo.moveInPlaylist(playlistId, index, index - 1) }; Unit })
-                        if (index < tracks.lastIndex) add("Nach unten" to { scope.launch { repo.moveInPlaylist(playlistId, index, index + 1) }; Unit })
-                        add("Aus Playlist entfernen" to { scope.launch { repo.playlists.removeTrack(playlistId, t.id) }; Unit })
-                    },
+                    modifier = Modifier.draggedItem(dragState, key),
+                    menu = listOf(
+                        "Als Nächstes spielen" to { scope.launch { PlayerConnection.playNext(context, t); toast(context, "Wird als Nächstes gespielt") }; Unit },
+                        "Zur Warteschlange hinzufügen" to { scope.launch { PlayerConnection.addToQueue(context, t); toast(context, "Zur Warteschlange hinzugefügt") }; Unit },
+                        "Aus Playlist entfernen" to { scope.launch { repo.playlists.removeTrack(playlistId, t.id) }; Unit },
+                    ),
+                    trailing = { DragHandle(dragState, key) },
                 )
             }
         }

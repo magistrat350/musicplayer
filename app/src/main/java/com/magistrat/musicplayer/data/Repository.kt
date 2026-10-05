@@ -123,6 +123,11 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         playlists.addTrack(PlaylistTrack(playlistId, trackId, playlists.maxPosition(playlistId) + 1))
     }
 
+    /** Fuegt an fester Position ein (z. B. Reihenfolge einer YouTube-Playlist). */
+    suspend fun addToPlaylistAt(playlistId: Long, trackId: Long, position: Int) {
+        playlists.addTrack(PlaylistTrack(playlistId, trackId, position))
+    }
+
     suspend fun moveInPlaylist(playlistId: Long, from: Int, to: Int) {
         val ids = playlists.tracksOnce(playlistId).map { it.id }.toMutableList()
         if (from !in ids.indices || to !in ids.indices) return

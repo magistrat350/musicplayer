@@ -96,18 +96,21 @@ fun SongsScreen() {
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-            if (tracks.isEmpty()) {
-                EmptyHint("Noch keine Songs.\nLade über den Tab „Download“ einen YouTube-Link als MP3 herunter oder importiere vorhandene Dateien.")
-            }
             LazyColumn(Modifier.fillMaxSize()) {
+                if (!searching) item(key = "continue") { ContinueRow() }
+                if (tracks.isEmpty()) item(key = "empty") {
+                    EmptyHint("Noch keine Songs.\nLade über den Tab „Download“ einen YouTube-Link als MP3 herunter oder importiere vorhandene Dateien.")
+                }
                 itemsIndexed(shown, key = { _, t -> t.id }) { _, t ->
                     MediaRow(
                         title = t.title,
                         subtitle = listOf(t.artist, if (t.durationMs > 0) formatTime(t.durationMs) else "").filter { it.isNotBlank() }.joinToString(" · "),
                         coverPath = t.coverPath,
-                        highlighted = player.title == t.title && player.artist == t.artist && player.source?.type != SourceType.AUDIOBOOK,
+                        highlighted = player.itemId == t.id && player.source?.type != SourceType.AUDIOBOOK,
                         onClick = { scope.launch { Playback.playSingleTrack(context, t) } },
                         menu = listOf(
+                            "Als Nächstes spielen" to { scope.launch { PlayerConnection.playNext(context, t); toast(context, "Wird als Nächstes gespielt") }; Unit },
+                            "Zur Warteschlange hinzufügen" to { scope.launch { PlayerConnection.addToQueue(context, t); toast(context, "Zur Warteschlange hinzugefügt") }; Unit },
                             "Zur Playlist hinzufügen" to { addingToPlaylist = t },
                             "Bearbeiten / Bild" to { editing = t },
                             "Löschen" to { deleting = t },
@@ -135,6 +138,9 @@ fun SongsScreen() {
         }
     }
 }
+
+fun toast(context: android.content.Context, text: String) =
+    Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
 
 @Composable
 fun EmptyHint(text: String) {

@@ -60,6 +60,17 @@ data class Audiobook(
 data class AudiobookWithCount(
     @Embedded val book: Audiobook,
     val chapterCount: Int,
+    /** Gesamtdauer aller Kapitel */
+    val totalMs: Long,
+    /** Gehoerte Zeit laut automatischem Lesezeichen */
+    val listenedMs: Long,
+)
+
+/** Eintrag fuer "Weiterhoeren": letzter Stand einer Playlist / eines Hoerbuchs. */
+data class RecentSource(
+    @Embedded val bookmark: Bookmark,
+    val sourceTitle: String,
+    val sourceCover: String?,
 )
 
 @Entity(

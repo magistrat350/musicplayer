@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -60,7 +64,7 @@ import kotlinx.coroutines.launch
 private val SPEEDS = listOf(0.75f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f)
 
 @Composable
-fun PlayerScreen(onClose: () -> Unit) {
+fun PlayerScreen(onClose: () -> Unit, onOpenQueue: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by PlayerConnection.state.collectAsStateWithLifecycle()
@@ -68,6 +72,9 @@ fun PlayerScreen(onClose: () -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     var speedMenu by remember { mutableStateOf(false) }
     var addingBookmark by remember { mutableStateOf(false) }
+    var sleepMenu by remember { mutableStateOf(false) }
+    val sleep by PlayerConnection.sleepTimer.collectAsStateWithLifecycle()
+    val now by rememberTicker()
     val isBook = state.source?.type == SourceType.AUDIOBOOK
 
     Column(
@@ -75,6 +82,7 @@ fun PlayerScreen(onClose: () -> Unit) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -82,6 +90,7 @@ fun PlayerScreen(onClose: () -> Unit) {
             IconButton(onClick = onClose) { Icon(Icons.Default.KeyboardArrowDown, "Schließen") }
             Text(
                 when (state.source?.type) {
+                    null -> if (state.isQueued) "Warteschlange" else ""
                     SourceType.AUDIOBOOK -> "Hörbuch · ${state.album}"
                     SourceType.PLAYLIST -> "Playlist · ${state.album}"
                     else -> "Bibliothek"
@@ -177,6 +186,33 @@ fun PlayerScreen(onClose: () -> Unit) {
                     }
                 }
             }
+            Box {
+                IconButton(onClick = { sleepMenu = true }) {
+                    Icon(
+                        Icons.Default.Bedtime, "Schlaftimer",
+                        tint = if (sleep != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(expanded = sleepMenu, onDismissRequest = { sleepMenu = false }) {
+                    listOf(5, 15, 30, 45, 60, 90).forEach { m ->
+                        DropdownMenuItem(text = { Text("$m Minuten") }, onClick = {
+                            sleepMenu = false
+                            PlayerConnection.startSleepTimer(m)
+                        })
+                    }
+                    DropdownMenuItem(text = { Text(if (isBook) "Ende des Kapitels" else "Ende des Titels") }, onClick = {
+                        sleepMenu = false
+                        PlayerConnection.startSleepTimerEndOfItem()
+                    })
+                    if (sleep != null) {
+                        DropdownMenuItem(text = { Text("Timer aus") }, onClick = {
+                            sleepMenu = false
+                            PlayerConnection.cancelSleepTimer()
+                        })
+                    }
+                }
+            }
+            IconButton(onClick = onOpenQueue) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Warteschlange") }
             IconButton(onClick = { PlayerConnection.cycleRepeat() }) {
                 Icon(
                     if (state.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
@@ -184,6 +220,14 @@ fun PlayerScreen(onClose: () -> Unit) {
                     tint = if (state.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        sleep?.let { t ->
+            Text(
+                if (t.endOfItem) "Schlaftimer: stoppt am Ende " + (if (isBook) "des Kapitels" else "des Titels")
+                else "Schlaftimer: noch ${formatTime((t.endAt ?: now) - now)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 
@@ -205,6 +249,18 @@ fun PlayerScreen(onClose: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun rememberTicker(): androidx.compose.runtime.State<Long> {
+    val t = remember { androidx.compose.runtime.mutableLongStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            t.longValue = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    return t
 }
 
 private fun formatSpeed(s: Float): String =

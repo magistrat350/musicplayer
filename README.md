@@ -7,6 +7,8 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
 - **YouTube → MP3**: Link einfügen (oder in der YouTube-App *Teilen → MusicPlayer*), die App lädt das Audio
   mit yt-dlp + ffmpeg herunter und speichert es als MP3. Das Vorschaubild wird automatisch als Cover übernommen.
   Optional landet der Song direkt in einer Playlist.
+- **Ganze YouTube-Playlists**: Bei einem Playlist-Link „Ganze YouTube-Playlist laden“ anhaken – alle Videos werden
+  nacheinander geladen und als Playlist (in der Original-Reihenfolge) angelegt.
 - **Bild pro Song**: Songs → ⋮ → *Bearbeiten / Bild* → eigenes Bild aus der Galerie wählen (auch für Playlists und Hörbücher).
 - **Playlists**: erstellen, umbenennen, Songs hinzufügen/entfernen/sortieren, eigenes Cover.
 - **Hörbücher**: einen Ordner mit Kapiteln oder einzelne Dateien (mp3, m4b, m4a, …) importieren.
@@ -17,6 +19,15 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
     In der Playlist bzw. dem Hörbuch steht dann **„Fortsetzen: … · 12:34“**.
   - *Manuell*: Im Player oben rechts auf das Lesezeichen-Symbol tippen (optional mit Bezeichnung).
     Die Lesezeichen erscheinen in der jeweiligen Playlist / im Hörbuch und lassen sich antippen oder löschen.
+- **Weiterhören** ganz oben im Songs-Tab: die zuletzt gehörten Playlists/Hörbücher mit Stand – ein Tipp setzt fort.
+  Hörbücher springen dabei 10 s zurück, damit man wieder reinkommt.
+- **Hörbuch-Fortschritt** in der Liste („43 % gehört, noch 3:12 h“, „fertig gehört ✓“).
+- **Schlaftimer** im Player (Mond-Symbol): 5–90 Minuten mit sanftem Ausblenden oder „Ende des Kapitels/Titels“.
+- **Warteschlange**: ⋮ → „Als Nächstes spielen“ / „Zur Warteschlange hinzufügen“; im Player über das Listen-Symbol
+  ansehen, umsortieren (Griff ziehen) und Einträge entfernen.
+- **Drag & Drop** in Playlists: am Griff rechts ziehen.
+- **App-Updates**: Die App prüft beim Start die GitHub-Releases und bietet neue Versionen direkt zum Installieren an
+  (oder manuell im Download-Tab „Nach App-Updates suchen“). Beim ersten Mal muss Android die Installation aus der App erlauben.
 - Hintergrundwiedergabe mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm.
 - Vorhandene MP3s vom Handy importieren (Songs → Ordnersymbol).
 

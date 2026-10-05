@@ -34,10 +34,19 @@ fun buildMediaItem(
     artist: String,
     album: String?,
     coverPath: String?,
+): MediaItem = buildMediaItem(key.encode(), uri, title, artist, album, coverPath)
+
+fun buildMediaItem(
+    mediaId: String,
+    uri: String,
+    title: String,
+    artist: String,
+    album: String?,
+    coverPath: String?,
 ): MediaItem {
     val mediaUri = Uri.parse(uri)
     return MediaItem.Builder()
-        .setMediaId(key.encode())
+        .setMediaId(mediaId)
         .setUri(mediaUri)
         .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(mediaUri).build())
         .setMediaMetadata(

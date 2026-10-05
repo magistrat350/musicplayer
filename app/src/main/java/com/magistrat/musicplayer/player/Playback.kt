@@ -12,6 +12,9 @@ import kotlinx.coroutines.withContext
 object Playback {
     private val repo get() = App.instance.repo
 
+    /** So weit wird beim Fortsetzen eines Hoerbuchs zurueckgespult. */
+    const val AUDIOBOOK_REWIND_MS = 10_000L
+
     private fun trackItems(source: SourceKey, tracks: List<Track>, album: String?) = tracks.map {
         buildMediaItem(ItemKey(source, it.id), it.uri, it.title, it.artist, album, it.coverPath)
     }
@@ -63,7 +66,14 @@ object Playback {
         var pos = 0L
         if (startIndex == null && !fromStart && auto != null) {
             index = resolveIndex(auto, chapters.map { it.id })
-            pos = auto.positionMs
+            // Ein paar Sekunden zurueck, damit man wieder in den Satz hineinfindet
+            pos = (auto.positionMs - AUDIOBOOK_REWIND_MS).coerceAtLeast(0)
+            val ch = chapters[index]
+            if (index == chapters.lastIndex && ch.durationMs > 0 && auto.positionMs >= ch.durationMs - 3_000) {
+                // Bereits fertig gehoert -> von vorne
+                index = 0
+                pos = 0
+            }
         }
         val items = chapters.map {
             buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath)
