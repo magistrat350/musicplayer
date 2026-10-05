@@ -55,6 +55,8 @@ data class Audiobook(
     val author: String = "",
     val coverPath: String? = null,
     val addedAt: Long = System.currentTimeMillis(),
+    /** YouTube-Playlist/-Video, aus dem das Hoerbuch geladen wurde (fuer "Neue Folgen laden") */
+    val sourceUrl: String? = null,
 )
 
 data class AudiobookWithCount(
@@ -87,6 +89,7 @@ data class Chapter(
     val uri: String,
     val durationMs: Long = 0,
     val position: Int,
+    val youtubeId: String? = null,
 )
 
 /** Woher die aktuelle Wiedergabeliste stammt. */

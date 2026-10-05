@@ -90,7 +90,7 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         NavHost(nav, startDestination = "songs", modifier = Modifier.padding(padding)) {
             composable("songs") { SongsScreen() }
             composable("playlists") { PlaylistsScreen(onOpen = { nav.navigate("playlist/$it") }) }
-            composable("audiobooks") { AudiobooksScreen(onOpen = { nav.navigate("audiobook/$it") }) }
+            composable("audiobooks") { AudiobooksScreen(onOpen = { nav.navigate("audiobook/$it") }, onYoutube = { goTab("download") }) }
             composable("download") { DownloadScreen(sharedUrl, onSharedUrlConsumed) }
             composable("playlist/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) {
                 PlaylistDetailScreen(it.arguments?.getLong("id") ?: 0, onBack = { nav.popBackStack() })

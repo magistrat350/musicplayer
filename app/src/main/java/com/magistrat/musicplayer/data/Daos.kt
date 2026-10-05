@@ -124,6 +124,18 @@ interface AudiobookDao {
     @Insert
     suspend fun insertChapters(chapters: List<Chapter>)
 
+    @Insert
+    suspend fun insertChapter(chapter: Chapter): Long
+
+    @Query("SELECT * FROM audiobooks WHERE sourceUrl = :url LIMIT 1")
+    suspend fun bySourceUrl(url: String): Audiobook?
+
+    @Query("SELECT youtubeId FROM chapters WHERE bookId = :bookId AND youtubeId IS NOT NULL")
+    suspend fun youtubeIds(bookId: Long): List<String>
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM chapters WHERE bookId = :bookId")
+    suspend fun maxChapterPosition(bookId: Long): Int
+
     @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY position")
     fun chapters(bookId: Long): Flow<List<Chapter>>
 

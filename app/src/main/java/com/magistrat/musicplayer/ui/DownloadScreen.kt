@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -55,8 +58,12 @@ import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.download.YtdlUpdater
 import com.magistrat.musicplayer.update.Updater
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Gewaehltes Download-Ziel (Musik / Hoerbuch); kann z. B. vom Hoerbuch-Tab vorbelegt werden. */
+val downloadKind = MutableStateFlow(YoutubeDownloadWorker.KIND_MUSIC)
 
 private val URL_REGEX = Regex("https?://\\S+")
 
@@ -82,9 +89,14 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
     var wholePlaylist by remember { mutableStateOf(true) }
     var appUpdateStatus by remember { mutableStateOf("") }
     var checkingApp by remember { mutableStateOf(false) }
+    val kind by downloadKind.collectAsStateWithLifecycle()
+    val asBook = kind == YoutubeDownloadWorker.KIND_AUDIOBOOK
     val isPlaylistLink = YoutubeDownloadWorker.isPlaylistUrl(url)
-    // Reine Playlist-Links: standardmaessig alles laden. Video-in-Playlist (z. B. Mix): nur das Video.
-    LaunchedEffect(url) { wholePlaylist = url.contains("/playlist") }
+    // Reine Playlist-Links: standardmaessig alles laden. Video-in-Playlist: bei Hoerbuechern ebenfalls
+    // (z. B. Folge 1 einer Reihe geteilt), bei Musik nur das Video. YouTube-Mixe nie automatisch.
+    LaunchedEffect(url, asBook) {
+        wholePlaylist = !YoutubeDownloadWorker.isMixUrl(url) && (url.contains("/playlist") || asBook)
+    }
 
     LaunchedEffect(initialUrl) {
         if (initialUrl != null) {
@@ -101,7 +113,7 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
 
     Scaffold(
         contentWindowInsets = WindowInsets(0),
-        topBar = { TopAppBar(title = { Text("YouTube → MP3") }) },
+        topBar = { TopAppBar(title = { Text("YouTube-Download") }) },
     ) { padding ->
         LazyColumn(
             Modifier
@@ -127,6 +139,21 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             }
                         },
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Speichern als:", style = MaterialTheme.typography.bodyMedium)
+                        FilterChip(
+                            selected = !asBook,
+                            onClick = { downloadKind.value = YoutubeDownloadWorker.KIND_MUSIC },
+                            label = { Text("Musik") },
+                            leadingIcon = { Icon(Icons.Default.MusicNote, null) },
+                        )
+                        FilterChip(
+                            selected = asBook,
+                            onClick = { downloadKind.value = YoutubeDownloadWorker.KIND_AUDIOBOOK },
+                            label = { Text("Hörbuch") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, null) },
+                        )
+                    }
                     if (isPlaylistLink) {
                         Row(
                             Modifier
@@ -135,12 +162,27 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(checked = wholePlaylist, onCheckedChange = { wholePlaylist = it })
-                            Text("Ganze YouTube-Playlist laden" + if (wholePlaylist && targetPlaylist == null) " (wird als neue Playlist angelegt)" else "")
+                            Text(
+                                when {
+                                    asBook -> "Ganze Playlist als Hörbuch laden (jedes Video = ein Kapitel)"
+                                    wholePlaylist && targetPlaylist == null -> "Ganze YouTube-Playlist laden (wird als neue Playlist angelegt)"
+                                    else -> "Ganze YouTube-Playlist laden"
+                                }
+                            )
                         }
                     }
-                    OutlinedButton(onClick = { pickingPlaylist = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.AutoMirrored.Filled.QueueMusic, null)
-                        Text("  Danach zu Playlist: ${targetName ?: if (isPlaylistLink && wholePlaylist) "neue" else "keine"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!asBook) {
+                        OutlinedButton(onClick = { pickingPlaylist = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null)
+                            Text("  Danach zu Playlist: ${targetName ?: if (isPlaylistLink && wholePlaylist) "neue" else "keine"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    } else {
+                        Text(
+                            if (isPlaylistLink && wholePlaylist) "Wurde die Playlist schon einmal geladen, werden nur neue Folgen ergänzt."
+                            else "Das Video wird als Hörbuch mit einem Kapitel gespeichert.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Button(
                         onClick = {
@@ -148,7 +190,12 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             if (link == null) {
                                 Toast.makeText(context, "Bitte einen gültigen Link eingeben", Toast.LENGTH_SHORT).show()
                             } else {
-                                YoutubeDownloadWorker.enqueue(context, link, targetPlaylist, fullPlaylist = isPlaylistLink && wholePlaylist)
+                                YoutubeDownloadWorker.enqueue(
+                                    context, link,
+                                    playlistId = if (asBook) null else targetPlaylist,
+                                    fullPlaylist = isPlaylistLink && wholePlaylist,
+                                    kind = kind,
+                                )
                                 url = ""
                                 Toast.makeText(context, "Download gestartet", Toast.LENGTH_SHORT).show()
                             }
@@ -157,7 +204,7 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Default.Download, null)
-                        Text("  Als MP3 herunterladen")
+                        Text(if (asBook) "  Als Hörbuch herunterladen" else "  Als MP3 herunterladen")
                     }
                     Text(
                         "Tipp: In der YouTube-App auf „Teilen“ → „MusicPlayer“ tippen, dann ist der Link automatisch hier.",

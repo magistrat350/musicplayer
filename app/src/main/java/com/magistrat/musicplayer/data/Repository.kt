@@ -200,7 +200,15 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         audiobooks.update(b.copy(coverPath = path))
     }
 
-    suspend fun deleteAudiobook(b: Audiobook) {
+    val audiobookDir: File
+        get() = File(musicDir, "audiobooks").apply { mkdirs() }
+
+    suspend fun deleteAudiobook(b: Audiobook) = withContext(Dispatchers.IO) {
+        // Von YouTube geladene Kapitel liegen im App-Speicher -> mitloeschen (importierte Originaldateien bleiben)
+        audiobooks.chaptersOnce(b.id).forEach { c ->
+            val uri = Uri.parse(c.uri)
+            if (uri.scheme == "file") uri.path?.let { p -> if (p.startsWith(musicDir.absolutePath)) File(p).delete() }
+        }
         audiobooks.delete(b)
         bookmarks.deleteForSource(SourceType.AUDIOBOOK, b.id)
         deleteCover(b.coverPath)

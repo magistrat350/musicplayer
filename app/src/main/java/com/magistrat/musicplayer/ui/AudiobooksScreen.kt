@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -50,13 +51,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.data.SourceType
+import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.player.Playback
 import com.magistrat.musicplayer.player.PlayerConnection
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AudiobooksScreen(onOpen: (Long) -> Unit) {
+fun AudiobooksScreen(onOpen: (Long) -> Unit, onYoutube: () -> Unit) {
     val context = LocalContext.current
     val repo = App.instance.repo
     val scope = rememberCoroutineScope()
@@ -90,6 +92,11 @@ fun AudiobooksScreen(onOpen: (Long) -> Unit) {
             Box {
                 FloatingActionButton(onClick = { menuOpen = true }) { Icon(Icons.Default.Add, "Hörbuch hinzufügen") }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Von YouTube laden") }, onClick = {
+                        menuOpen = false
+                        downloadKind.value = YoutubeDownloadWorker.KIND_AUDIOBOOK
+                        onYoutube()
+                    })
                     DropdownMenuItem(text = { Text("Ordner wählen (ein Hörbuch)") }, onClick = {
                         menuOpen = false
                         pickFolder.launch(null)
@@ -106,7 +113,7 @@ fun AudiobooksScreen(onOpen: (Long) -> Unit) {
             if (importing) LinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(Modifier.fillMaxSize()) {
                 if (books.isEmpty()) item {
-                    EmptyHint("Noch keine Hörbücher.\nTippe auf +, um einen Ordner mit Kapiteln oder einzelne Dateien (mp3, m4b, …) hinzuzufügen.")
+                    EmptyHint("Noch keine Hörbücher.\nTippe auf +, um eine YouTube-Playlist zu laden oder einen Ordner bzw. einzelne Dateien (mp3, m4b, …) hinzuzufügen.")
                 }
                 items(books, key = { it.book.id }) { b ->
                     val progress = if (b.totalMs > 0) (b.listenedMs.toFloat() / b.totalMs).coerceIn(0f, 1f) else 0f
@@ -175,6 +182,13 @@ fun AudiobookDetailScreen(bookId: Long, onBack: () -> Unit) {
                 title = { Text(book?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") } },
                 actions = {
+                    val src = book?.sourceUrl
+                    if (src != null && YoutubeDownloadWorker.isPlaylistUrl(src)) {
+                        IconButton(onClick = {
+                            YoutubeDownloadWorker.enqueue(context, src, null, fullPlaylist = true, kind = YoutubeDownloadWorker.KIND_AUDIOBOOK)
+                            Toast.makeText(context, "Suche nach neuen Folgen… (Fortschritt im Download-Tab)", Toast.LENGTH_SHORT).show()
+                        }) { Icon(Icons.Default.Refresh, "Neue Folgen laden") }
+                    }
                     IconButton(onClick = { editing = true }) { Icon(Icons.Default.Edit, "Bearbeiten") }
                     IconButton(onClick = { deleting = true }) { Icon(Icons.Default.Delete, "Löschen") }
                 },
@@ -281,7 +295,8 @@ fun AudiobookDetailScreen(bookId: Long, onBack: () -> Unit) {
     if (deleting) {
         ConfirmDialog(
             "Hörbuch entfernen?",
-            "Das Hörbuch wird aus der App entfernt (die Originaldateien bleiben auf dem Gerät).",
+            if (book?.sourceUrl != null) "Das Hörbuch und die heruntergeladenen Dateien werden gelöscht."
+            else "Das Hörbuch wird aus der App entfernt (die Originaldateien bleiben auf dem Gerät).",
             confirm = "Entfernen",
             onDismiss = { deleting = false },
         ) {

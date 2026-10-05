@@ -15,6 +15,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.magistrat.musicplayer.App
+import com.magistrat.musicplayer.data.Audiobook
+import com.magistrat.musicplayer.data.Chapter
 import com.magistrat.musicplayer.data.Track
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -26,25 +28,38 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Laedt einen YouTube-Link als MP3 herunter (yt-dlp + ffmpeg), speichert das Vorschaubild
- * als Cover und legt den Song in der Bibliothek an (optional direkt in einer Playlist).
+ * Laedt YouTube-Audio herunter (yt-dlp + ffmpeg).
  *
- * Mit [KEY_FULL_PLAYLIST] wird eine ganze YouTube-Playlist nacheinander geladen und
- * daraus eine Playlist in der App angelegt (Reihenfolge bleibt erhalten).
+ * - Musik: als MP3 in die Bibliothek (optional direkt in eine Playlist).
+ *   Mit [KEY_FULL_PLAYLIST] wird eine ganze YouTube-Playlist als App-Playlist angelegt.
+ * - Hoerbuch ([KIND_AUDIOBOOK]): jedes Video wird ein Kapitel. Bei einer Playlist entsteht ein Hoerbuch
+ *   mit allen Folgen; erneutes Laden derselben Playlist ergaenzt nur neue Folgen.
  */
 class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     private val app = context.applicationContext as App
+    private val repo get() = app.repo
     private val notifId = id.hashCode()
     private val ytdl get() = YoutubeDL.getInstance()
     private val processId = id.toString()
 
-    private class Downloaded(val trackId: Long, val title: String, val existed: Boolean)
+    /** Heruntergeladene Audiodatei inkl. Metadaten. */
+    private class Fetched(
+        val title: String,
+        val artist: String,
+        val ytId: String?,
+        val file: File,
+        val coverPath: String?,
+        val durationMs: Long,
+    )
+
+    private class PlaylistInfo(val title: String, val uploader: String, val entries: List<Pair<String?, String>>)
 
     override suspend fun doWork(): Result {
         val url = inputData.getString(KEY_URL) ?: return Result.failure(workDataOf(KEY_ERROR to "Kein Link"))
         val playlistId = inputData.getLong(KEY_PLAYLIST, -1L)
         val fullPlaylist = inputData.getBoolean(KEY_FULL_PLAYLIST, false)
+        val audiobook = inputData.getString(KEY_KIND) == KIND_AUDIOBOOK
 
         try {
             setForeground(foregroundInfo("Download wird vorbereitet…"))
@@ -58,7 +73,11 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
 
         return try {
             withContext(Dispatchers.IO) {
-                if (fullPlaylist) downloadPlaylist(url, playlistId) else downloadSingle(url, playlistId)
+                when {
+                    audiobook -> downloadAudiobook(url, fullPlaylist)
+                    fullPlaylist -> downloadMusicPlaylist(url, playlistId)
+                    else -> downloadMusicSingle(url, playlistId)
+                }
             }
         } catch (e: CancellationException) {
             ytdl.destroyProcessById(processId)
@@ -71,13 +90,125 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         }
     }
 
-    private suspend fun downloadSingle(url: String, playlistId: Long): Result {
-        val d = downloadOne(url, prefix = "")
-        if (playlistId > 0) app.repo.addToPlaylist(playlistId, d.trackId)
-        return Result.success(workDataOf(KEY_TITLE to d.title, KEY_STATUS to if (d.existed) "Bereits vorhanden" else "Fertig"))
+    // ---------- Musik ----------
+
+    private suspend fun downloadMusicSingle(url: String, playlistId: Long): Result {
+        report("", 0f, "Infos werden geladen…")
+        val info = runInterruptible { ytdl.getInfo(YoutubeDLRequest(url).apply { addOption("--no-playlist") }) }
+        val existing = info.id?.let { repo.tracks.byYoutubeId(it) }
+        val (trackId, title) = if (existing != null) {
+            existing.id to existing.title
+        } else {
+            val f = fetch(url, prefix = "", displayTitle = null, speech = false, outDir = repo.musicDir)
+            insertTrack(f) to f.title
+        }
+        if (playlistId > 0) repo.addToPlaylist(playlistId, trackId)
+        return Result.success(workDataOf(KEY_TITLE to title, KEY_STATUS to if (existing != null) "Bereits vorhanden" else "Fertig"))
     }
 
-    private suspend fun downloadPlaylist(url: String, targetPlaylistId: Long): Result {
+    private suspend fun downloadMusicPlaylist(url: String, targetPlaylistId: Long): Result {
+        val list = readPlaylist(url)
+        val playlistId = if (targetPlaylistId > 0) targetPlaylistId else repo.createPlaylist(list.title)
+        val startPos = repo.playlists.maxPosition(playlistId) + 1
+        var ok = 0
+        var failed = 0
+        list.entries.forEachIndexed { i, (ytId, videoUrl) ->
+            val prefix = "${i + 1}/${list.entries.size}"
+            try {
+                val existing = ytId?.let { repo.tracks.byYoutubeId(it) }
+                val trackId = existing?.id ?: insertTrack(fetch(videoUrl, prefix, list.title, speech = false, outDir = repo.musicDir))
+                repo.addToPlaylistAt(playlistId, trackId, startPos + i)
+                ok++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed++
+            }
+        }
+        return summary(list.title, ok, failed, list.entries.size)
+    }
+
+    private suspend fun insertTrack(f: Fetched): Long = repo.tracks.insert(
+        Track(
+            title = f.title,
+            artist = f.artist,
+            uri = Uri.fromFile(f.file).toString(),
+            coverPath = f.coverPath,
+            durationMs = f.durationMs,
+            youtubeId = f.ytId,
+        )
+    )
+
+    // ---------- Hoerbuch ----------
+
+    private suspend fun downloadAudiobook(url: String, fullPlaylist: Boolean): Result {
+        val outDir = repo.audiobookDir
+
+        if (!fullPlaylist) {
+            // Einzelnes (meist langes) Video -> Hoerbuch mit einem Kapitel
+            val f = fetch(url, prefix = "", displayTitle = null, speech = true, outDir = outDir)
+            val bookId = repo.audiobooks.insert(
+                Audiobook(title = f.title, author = f.artist, coverPath = f.coverPath, sourceUrl = url)
+            )
+            repo.audiobooks.insertChapter(
+                Chapter(bookId = bookId, title = f.title, uri = Uri.fromFile(f.file).toString(), durationMs = f.durationMs, position = 0, youtubeId = f.ytId)
+            )
+            return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch gespeichert"))
+        }
+
+        // Einheitliche Playlist-URL, damit "Neue Folgen laden" dasselbe Hoerbuch wiederfindet
+        val listUrl = canonicalPlaylistUrl(url) ?: url
+        val list = readPlaylist(listUrl)
+        // Gleiche Playlist schon vorhanden? Dann nur neue Folgen ergaenzen.
+        val existingBook = repo.audiobooks.bySourceUrl(listUrl)
+        val bookId = existingBook?.id ?: repo.audiobooks.insert(
+            Audiobook(title = list.title, author = list.uploader, sourceUrl = listUrl)
+        )
+        val have = repo.audiobooks.youtubeIds(bookId).toSet()
+        val todo = list.entries.withIndex().filter { (_, e) -> e.first.let { id -> id == null || id !in have } }
+        if (todo.isEmpty()) {
+            return Result.success(workDataOf(KEY_TITLE to list.title, KEY_STATUS to "Keine neuen Folgen"))
+        }
+        // Neue Folgen hinter die vorhandenen haengen, Playlist-Reihenfolge beibehalten
+        val basePos = if (existingBook != null) repo.audiobooks.maxChapterPosition(bookId) + 1 else 0
+
+        var ok = 0
+        var failed = 0
+        todo.forEachIndexed { n, (_, entry) ->
+            val prefix = "${n + 1}/${todo.size}"
+            try {
+                val f = fetch(entry.second, prefix, list.title, speech = true, outDir = outDir)
+                repo.audiobooks.insertChapter(
+                    Chapter(
+                        bookId = bookId,
+                        title = f.title,
+                        uri = Uri.fromFile(f.file).toString(),
+                        durationMs = f.durationMs,
+                        position = basePos + n,
+                        youtubeId = f.ytId ?: entry.first,
+                    )
+                )
+                // Erstes Vorschaubild wird zum Hoerbuch-Cover
+                val book = repo.audiobooks.get(bookId)
+                if (book != null && book.coverPath == null && f.coverPath != null) {
+                    repo.audiobooks.update(book.copy(coverPath = f.coverPath))
+                } else {
+                    repo.deleteCover(f.coverPath)
+                }
+                ok++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed++
+            }
+        }
+        if (ok == 0 && existingBook == null) repo.audiobooks.get(bookId)?.let { repo.audiobooks.delete(it) }
+        return summary(list.title, ok, failed, todo.size, unit = if (existingBook != null) "neuen Folgen" else "Folgen")
+    }
+
+    // ---------- yt-dlp ----------
+
+    private suspend fun readPlaylist(url: String): PlaylistInfo {
         report("", 0f, "Playlist wird gelesen…")
         val response = runInterruptible {
             ytdl.execute(
@@ -90,49 +221,29 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             )
         }
         val json = JSONObject(response.out)
-        val listTitle = json.optString("title").ifBlank { "YouTube-Playlist" }
-        val entries = json.optJSONArray("entries")
-        val videoUrls = buildList {
-            if (entries != null) for (i in 0 until entries.length()) {
-                val e = entries.optJSONObject(i) ?: continue
-                val id = e.optString("id")
+        val title = json.optString("title").ifBlank { "YouTube-Playlist" }
+        val uploader = json.optString("uploader").ifBlank { json.optString("channel") }
+        val arr = json.optJSONArray("entries")
+        val entries = buildList {
+            if (arr != null) for (i in 0 until arr.length()) {
+                val e = arr.optJSONObject(i) ?: continue
+                val id = e.optString("id").takeIf { it.isNotBlank() }
                 val u = e.optString("url")
                 when {
-                    id.isNotBlank() -> add("https://www.youtube.com/watch?v=$id")
-                    u.startsWith("http") -> add(u)
+                    id != null -> add(id to "https://www.youtube.com/watch?v=$id")
+                    u.startsWith("http") -> add(null to u)
                 }
             }
         }
-        if (videoUrls.isEmpty()) {
-            return Result.failure(workDataOf(KEY_TITLE to listTitle, KEY_ERROR to "Keine Videos in der Playlist gefunden"))
-        }
-
-        val playlistId = if (targetPlaylistId > 0) targetPlaylistId else app.repo.createPlaylist(listTitle)
-        val startPos = app.repo.playlists.maxPosition(playlistId) + 1
-        var ok = 0
-        var failed = 0
-        videoUrls.forEachIndexed { i, videoUrl ->
-            val prefix = "${i + 1}/${videoUrls.size}"
-            try {
-                val d = downloadOne(videoUrl, prefix, listTitle)
-                app.repo.addToPlaylistAt(playlistId, d.trackId, startPos + i)
-                ok++
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failed++
-            }
-        }
-        val status = "$ok von ${videoUrls.size} geladen" + if (failed > 0) ", $failed fehlgeschlagen" else ""
-        return if (ok == 0) {
-            Result.failure(workDataOf(KEY_TITLE to listTitle, KEY_ERROR to status))
-        } else {
-            Result.success(workDataOf(KEY_TITLE to listTitle, KEY_STATUS to status))
-        }
+        if (entries.isEmpty()) throw IllegalStateException("Keine Videos in der Playlist gefunden")
+        return PlaylistInfo(title, uploader, entries)
     }
 
-    /** Laedt ein einzelnes Video als MP3 und legt den Song an (oder liefert den vorhandenen). */
-    private suspend fun downloadOne(url: String, prefix: String, displayTitle: String? = null): Downloaded {
+    /**
+     * Laedt ein einzelnes Video als MP3. [speech] = Hoerbuch/Podcast: geringere Bitrate
+     * (spart viel Speicher bei langen Aufnahmen, fuer Sprache voellig ausreichend).
+     */
+    private suspend fun fetch(url: String, prefix: String, displayTitle: String?, speech: Boolean, outDir: File): Fetched {
         val head = if (prefix.isEmpty()) "" else "$prefix · "
         report(displayTitle ?: "", 0f, "${head}Infos werden geladen…")
         val info = runInterruptible {
@@ -143,18 +254,13 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         val ytId = info.id
         val shownTitle = displayTitle ?: title
 
-        if (ytId != null) {
-            app.repo.tracks.byYoutubeId(ytId)?.let { return Downloaded(it.id, title, existed = true) }
-        }
-
         val base = "yt_${ytId ?: System.currentTimeMillis()}_${System.currentTimeMillis()}"
-        val outDir = app.repo.musicDir
         val request = YoutubeDLRequest(url).apply {
             addOption("--no-playlist")
             addOption("--no-mtime")
             addOption("-x")
             addOption("--audio-format", "mp3")
-            addOption("--audio-quality", "0")
+            addOption("--audio-quality", if (speech) "96K" else "0")
             addOption("--embed-metadata")
             addOption("--write-thumbnail")
             addOption("--convert-thumbnails", "jpg")
@@ -178,21 +284,27 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         if (!mp3.exists()) throw IllegalStateException("MP3-Datei wurde nicht erstellt")
 
         val thumb = outDir.listFiles()?.firstOrNull { it.name.startsWith(base) && it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp") }
-        val coverPath = thumb?.let { app.repo.saveCoverFile(it) }
+        val coverPath = thumb?.let { repo.saveCoverFile(it) }
         thumb?.delete()
 
-        val meta = app.repo.readMeta(Uri.fromFile(mp3), withPicture = false)
-        val trackId = app.repo.tracks.insert(
-            Track(
-                title = title,
-                artist = artist,
-                uri = Uri.fromFile(mp3).toString(),
-                coverPath = coverPath,
-                durationMs = if (meta.durationMs > 0) meta.durationMs else info.duration * 1000L,
-                youtubeId = ytId,
-            )
+        val meta = repo.readMeta(Uri.fromFile(mp3), withPicture = false)
+        return Fetched(
+            title = title,
+            artist = artist,
+            ytId = ytId,
+            file = mp3,
+            coverPath = coverPath,
+            durationMs = if (meta.durationMs > 0) meta.durationMs else info.duration * 1000L,
         )
-        return Downloaded(trackId, title, existed = false)
+    }
+
+    private fun summary(title: String, ok: Int, failed: Int, total: Int, unit: String = "Titel"): Result {
+        val status = "$ok von $total $unit geladen" + if (failed > 0) ", $failed fehlgeschlagen" else ""
+        return if (ok == 0) {
+            Result.failure(workDataOf(KEY_TITLE to title, KEY_ERROR to status))
+        } else {
+            Result.success(workDataOf(KEY_TITLE to title, KEY_STATUS to status))
+        }
     }
 
     private suspend fun report(title: String, progress: Float, status: String) {
@@ -207,7 +319,7 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
     private fun buildNotification(text: String, percent: Int, indeterminate: Boolean) =
         NotificationCompat.Builder(applicationContext, App.CHANNEL_DOWNLOADS)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("YouTube → MP3")
+            .setContentTitle("YouTube-Download")
             .setContentText(text)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -236,22 +348,40 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         const val KEY_URL = "url"
         const val KEY_PLAYLIST = "playlist"
         const val KEY_FULL_PLAYLIST = "full_playlist"
+        const val KEY_KIND = "kind"
         const val KEY_TITLE = "title"
         const val KEY_PROGRESS = "progress"
         const val KEY_STATUS = "status"
         const val KEY_ERROR = "error"
 
+        const val KIND_MUSIC = "music"
+        const val KIND_AUDIOBOOK = "audiobook"
+
         /** true, wenn der Link auf eine YouTube-Playlist zeigt (oder ein Video innerhalb einer Playlist). */
         fun isPlaylistUrl(url: String): Boolean =
             Regex("[?&]list=[\\w-]+").containsMatchIn(url) || url.contains("/playlist")
 
-        fun enqueue(context: Context, url: String, playlistId: Long?, fullPlaylist: Boolean = false) {
+        /** https://www.youtube.com/playlist?list=ID aus beliebigem Link mit list=-Parameter. */
+        fun canonicalPlaylistUrl(url: String): String? =
+            Regex("[?&]list=([\\w-]+)").find(url)?.groupValues?.get(1)?.let { "https://www.youtube.com/playlist?list=$it" }
+
+        /** YouTube-Mixe ("Radio", list=RD...) sind automatisch erzeugt und quasi endlos. */
+        fun isMixUrl(url: String): Boolean = Regex("[?&]list=RD").containsMatchIn(url)
+
+        fun enqueue(
+            context: Context,
+            url: String,
+            playlistId: Long?,
+            fullPlaylist: Boolean = false,
+            kind: String = KIND_MUSIC,
+        ) {
             val req = OneTimeWorkRequestBuilder<YoutubeDownloadWorker>()
                 .setInputData(
                     workDataOf(
                         KEY_URL to url,
                         KEY_PLAYLIST to (playlistId ?: -1L),
                         KEY_FULL_PLAYLIST to fullPlaylist,
+                        KEY_KIND to kind,
                     )
                 )
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
