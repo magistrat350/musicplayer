@@ -82,7 +82,7 @@ object PlayerConnection {
             album = md?.albumTitle?.toString() ?: "",
             artworkUri = md?.artworkUri?.toString(),
             isPlaying = c.isPlaying,
-            durationMs = c.duration.takeIf { it > 0 } ?: 0,
+            durationMs = c.duration.takeIf { it > 0 } ?: 0L,
             index = c.currentMediaItemIndex,
             count = c.mediaItemCount,
             speed = c.playbackParameters.speed,

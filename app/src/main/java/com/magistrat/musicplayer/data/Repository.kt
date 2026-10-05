@@ -158,7 +158,7 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         persist(tree)
         val dir = DocumentFile.fromTreeUri(context, tree) ?: return@withContext null
         val files = dir.listFiles()
-            .filter { it.isFile && (it.type?.startsWith("audio/") == true || it.name?.substringAfterLast('.')?.lowercase() in AUDIO_EXT) }
+            .filter { it.isFile && (it.type?.startsWith("audio/") == true || (it.name?.substringAfterLast('.')?.lowercase() ?: "") in AUDIO_EXT) }
             .map { it.uri to (it.name ?: "") }
             .sortedWith { a, b -> naturalCompare(a.second, b.second) }
         if (files.isEmpty()) return@withContext null
