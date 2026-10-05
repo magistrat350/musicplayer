@@ -5,16 +5,20 @@ import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.MainActivity
 import com.magistrat.musicplayer.data.Bookmark
 import com.magistrat.musicplayer.data.SourceType
+import com.magistrat.musicplayer.widget.NowPlaying
+import com.magistrat.musicplayer.widget.PlayerWidget
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
@@ -49,6 +53,16 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         player.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.containsAny(
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                        Player.EVENT_TIMELINE_CHANGED,
+                    )
+                ) updateWidget()
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 if (isPlaying) startTicker() else {
                     ticker?.cancel()
@@ -108,6 +122,30 @@ class PlaybackService : MediaSessionService() {
                     }.toMutableList()
                     return Futures.immediateFuture(resolved)
                 }
+
+                // Play ohne Wiedergabeliste (Widget, Kopfhoerer-Taste, Sperrbildschirm nach Neustart):
+                // zuletzt gehoerte Playlist bzw. Hoerbuch am gespeicherten Stand fortsetzen.
+                override fun onPlaybackResumption(
+                    mediaSession: MediaSession,
+                    controller: MediaSession.ControllerInfo,
+                ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+                    val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                    scope.launch {
+                        val p = try {
+                            Playback.prepareMostRecent()
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (p == null) {
+                            future.setException(UnsupportedOperationException("Nichts zum Fortsetzen"))
+                        } else {
+                            val speed = getSharedPreferences("player", MODE_PRIVATE).getFloat("speed_${p.source.type.name}", 1f)
+                            player.playbackParameters = PlaybackParameters(speed)
+                            future.set(MediaSession.MediaItemsWithStartPosition(p.items, p.index, p.positionMs))
+                        }
+                    }
+                    return future
+                }
             })
             .build()
     }
@@ -137,7 +175,23 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun updateWidget() {
+        val item = player.currentMediaItem
+        val key = ItemKey.decode(item?.mediaId)
+        val state = item?.let {
+            NowPlaying(
+                title = it.mediaMetadata.title?.toString() ?: "",
+                sourceTitle = it.mediaMetadata.albumTitle?.toString() ?: "",
+                coverPath = it.mediaMetadata.artworkUri?.toString(),
+                isPlaying = player.isPlaying,
+                isAudiobook = key?.source?.type == SourceType.AUDIOBOOK,
+            )
+        }
+        PlayerWidget.update(this, state)
+    }
+
     override fun onDestroy() {
+        PlayerWidget.update(this, null)
         saveAuto()
         scope.cancel()
         session?.run {

@@ -164,6 +164,16 @@ interface BookmarkDao {
     )
     fun recent(): Flow<List<RecentSource>>
 
+    @Query(
+        "SELECT b.*, COALESCE(p.name, a.title) AS sourceTitle, COALESCE(p.coverPath, a.coverPath) AS sourceCover " +
+            "FROM bookmarks b " +
+            "LEFT JOIN playlists p ON b.sourceType = 'PLAYLIST' AND p.id = b.sourceId " +
+            "LEFT JOIN audiobooks a ON b.sourceType = 'AUDIOBOOK' AND a.id = b.sourceId " +
+            "WHERE b.isAuto = 1 AND (p.id IS NOT NULL OR a.id IS NOT NULL) " +
+            "ORDER BY b.createdAt DESC LIMIT 12"
+    )
+    suspend fun recentOnce(): List<RecentSource>
+
     @Insert
     suspend fun insert(b: Bookmark): Long
 

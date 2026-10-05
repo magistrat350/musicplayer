@@ -31,6 +31,9 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
 - **Drag & Drop** in Playlists: am Griff rechts ziehen.
 - **App-Updates**: Die App prüft beim Start die GitHub-Releases und bietet neue Versionen direkt zum Installieren an
   (oder manuell im Download-Tab „Nach App-Updates suchen“). Beim ersten Mal muss Android die Installation aus der App erlauben.
+- **Homescreen-Widget** (lange auf den Startbildschirm drücken → Widgets → MusicPlayer): zeigt die laufende bzw. zuletzt
+  gehörte Playlist/Hörbuch mit Cover und Stand; ▶ setzt direkt dort fort, ohne die App zu öffnen. ⏮ ⏭ springen.
+  Kopfhörer-Play-Taste und die Android-Mediensteuerung setzen ebenfalls am letzten Stand fort.
 - Hintergrundwiedergabe mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm.
 - Vorhandene MP3s vom Handy importieren (Songs → Ordnersymbol).
 

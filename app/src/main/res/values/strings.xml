@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MusicPlayer</string>
+    <string name="widget_description">Zuletzt gehörte Playlist bzw. Hörbuch – direkt fortsetzen</string>
 </resources>

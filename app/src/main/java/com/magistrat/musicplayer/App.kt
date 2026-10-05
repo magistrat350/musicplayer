@@ -7,6 +7,7 @@ import android.util.Log
 import com.magistrat.musicplayer.data.AppDatabase
 import com.magistrat.musicplayer.data.Repository
 import com.magistrat.musicplayer.download.YtdlUpdater
+import com.magistrat.musicplayer.widget.PlayerWidget
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CompletableDeferred
@@ -35,6 +36,8 @@ class App : Application() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_DOWNLOADS, "Downloads", NotificationManager.IMPORTANCE_LOW)
         )
+
+        PlayerWidget.refresh(this)
 
         appScope.launch(Dispatchers.IO) {
             try {

@@ -1,6 +1,7 @@
 package com.magistrat.musicplayer.player
 
 import android.content.Context
+import androidx.media3.common.MediaItem
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.data.Bookmark
 import com.magistrat.musicplayer.data.SourceType
@@ -30,10 +31,13 @@ object Playback {
         playLibrary(context, tracks.indexOfFirst { it.id == track.id }.coerceAtLeast(0))
     }
 
+    /** Fertig zusammengestellte Wiedergabeliste inkl. Startpunkt. */
+    class Prepared(val source: SourceKey, val items: List<MediaItem>, val index: Int, val positionMs: Long)
+
     /**
      * @param startIndex konkreter Song; null = am letzten Stand fortsetzen (oder von vorne, falls keiner existiert)
      */
-    suspend fun playPlaylist(context: Context, playlistId: Long, startIndex: Int?, fromStart: Boolean = false) {
+    suspend fun preparePlaylist(playlistId: Long, startIndex: Int?, fromStart: Boolean = false): Prepared? {
         val source = SourceKey(SourceType.PLAYLIST, playlistId)
         val (playlist, tracks, auto) = withContext(Dispatchers.IO) {
             Triple(
@@ -42,17 +46,17 @@ object Playback {
                 repo.bookmarks.auto(SourceType.PLAYLIST, playlistId),
             )
         }
-        if (tracks.isEmpty()) return
+        if (tracks.isEmpty()) return null
         var index = startIndex ?: 0
         var pos = 0L
         if (startIndex == null && !fromStart && auto != null) {
             index = resolveIndex(auto, tracks.map { it.id })
             pos = auto.positionMs
         }
-        PlayerConnection.play(context, source, trackItems(source, tracks, playlist?.name), index, pos)
+        return Prepared(source, trackItems(source, tracks, playlist?.name), index, pos)
     }
 
-    suspend fun playAudiobook(context: Context, bookId: Long, startIndex: Int?, fromStart: Boolean = false) {
+    suspend fun prepareAudiobook(bookId: Long, startIndex: Int?, fromStart: Boolean = false): Prepared? {
         val source = SourceKey(SourceType.AUDIOBOOK, bookId)
         val (book, chapters, auto) = withContext(Dispatchers.IO) {
             Triple(
@@ -61,7 +65,7 @@ object Playback {
                 repo.bookmarks.auto(SourceType.AUDIOBOOK, bookId),
             )
         }
-        if (book == null || chapters.isEmpty()) return
+        if (book == null || chapters.isEmpty()) return null
         var index = startIndex ?: 0
         var pos = 0L
         if (startIndex == null && !fromStart && auto != null) {
@@ -78,8 +82,33 @@ object Playback {
         val items = chapters.map {
             buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath)
         }
-        PlayerConnection.play(context, source, items, index, pos)
+        return Prepared(source, items, index, pos)
     }
+
+    /** Zuletzt gehoerte Playlist bzw. zuletzt gehoertes Hoerbuch am gespeicherten Stand (fuer Widget / Medientasten). */
+    suspend fun prepareMostRecent(): Prepared? {
+        val recent = withContext(Dispatchers.IO) { repo.bookmarks.recentOnce() }
+        for (r in recent) {
+            val bm = r.bookmark
+            val prepared = when (bm.sourceType) {
+                SourceType.PLAYLIST -> preparePlaylist(bm.sourceId, null)
+                SourceType.AUDIOBOOK -> prepareAudiobook(bm.sourceId, null)
+                SourceType.LIBRARY -> null
+            }
+            if (prepared != null) return prepared
+        }
+        return null
+    }
+
+    private suspend fun play(context: Context, p: Prepared?) {
+        if (p != null) PlayerConnection.play(context, p.source, p.items, p.index, p.positionMs)
+    }
+
+    suspend fun playPlaylist(context: Context, playlistId: Long, startIndex: Int?, fromStart: Boolean = false) =
+        play(context, preparePlaylist(playlistId, startIndex, fromStart))
+
+    suspend fun playAudiobook(context: Context, bookId: Long, startIndex: Int?, fromStart: Boolean = false) =
+        play(context, prepareAudiobook(bookId, startIndex, fromStart))
 
     /** Springt zu einem (manuellen) Lesezeichen. */
     suspend fun playBookmark(context: Context, bm: Bookmark) {
