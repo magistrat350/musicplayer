@@ -9,6 +9,11 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
   Optional landet der Song direkt in einer Playlist.
 - **Ganze YouTube-Playlists**: Bei einem Playlist-Link „Ganze YouTube-Playlist laden“ anhaken – alle Videos werden
   nacheinander geladen und als Playlist (in der Original-Reihenfolge) angelegt.
+- **Spotify-Playlists übernehmen**: Spotify-Link (Playlist, Album oder Song) einfügen oder in der Spotify-App
+  *Teilen → MusicPlayer*. Die Titelliste wird gelesen (öffentliche Playlists, kein Spotify-Konto nötig, bis ca. 100 Titel),
+  jeder Song auf YouTube gesucht (Bewertung nach Dauer, Interpret, offiziellen Kanälen; Live/Cover/Remix werden gemieden)
+  und als MP3 in derselben Reihenfolge in eine Playlist gelegt – mit Spotify-Cover. Über ⟳ in der Playlist werden später
+  neue Songs der Spotify-Playlist ergänzt.
 - **Hörbücher/Hörspiele von YouTube**: Im Download-Tab „Speichern als: Hörbuch“ wählen (oder Hörbücher → + → „Von YouTube laden“).
   Eine Playlist wird zu einem Hörbuch, jedes Video zu einem Kapitel (Sprache mit 96 kbit/s – spart Speicher).
   Über das ↻-Symbol im Hörbuch werden später nur **neue Folgen** nachgeladen.

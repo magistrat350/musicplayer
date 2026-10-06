@@ -26,6 +26,8 @@ data class Playlist(
     val name: String,
     val coverPath: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Spotify-Playlist, aus der sie uebernommen wurde (fuer "Mit Spotify abgleichen") */
+    val sourceUrl: String? = null,
 )
 
 @Entity(

@@ -19,7 +19,7 @@ class Converters {
 
 @Database(
     entities = [Track::class, Playlist::class, PlaylistTrack::class, Audiobook::class, Chapter::class, Bookmark::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -32,7 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "musicplayer.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
 
         /** v2: Hoerbuecher von YouTube (Quelle + Video-ID je Kapitel) */
@@ -40,6 +40,13 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE audiobooks ADD COLUMN sourceUrl TEXT")
                 db.execSQL("ALTER TABLE chapters ADD COLUMN youtubeId TEXT")
+            }
+        }
+
+        /** v3: Playlists aus Spotify (Quelle fuer spaeteren Abgleich) */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE playlists ADD COLUMN sourceUrl TEXT")
             }
         }
     }

@@ -74,6 +74,7 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         return try {
             withContext(Dispatchers.IO) {
                 when {
+                    inputData.getString(KEY_KIND) == KIND_SPOTIFY -> downloadSpotify(url, playlistId)
                     audiobook -> downloadAudiobook(url, fullPlaylist)
                     fullPlaylist -> downloadMusicPlaylist(url, playlistId)
                     else -> downloadMusicSingle(url, playlistId)
@@ -206,6 +207,119 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         return summary(list.title, ok, failed, todo.size, unit = if (existingBook != null) "neuen Folgen" else "Folgen")
     }
 
+    // ---------- Spotify ----------
+
+    /**
+     * Uebernimmt eine Spotify-Playlist (bzw. Album/Song): jeder Titel wird auf YouTube gesucht,
+     * der beste Treffer als MP3 geladen und in der Spotify-Reihenfolge in eine App-Playlist gelegt.
+     * Erneuter Aufruf mit demselben Link ergaenzt nur fehlende Titel.
+     */
+    private suspend fun downloadSpotify(url: String, targetPlaylistId: Long): Result {
+        report("", 0f, "Spotify-Playlist wird gelesen…")
+        val canon = Spotify.canonical(url) ?: url
+        val list = Spotify.fetch(canon)
+
+        val existing = if (targetPlaylistId > 0) repo.playlists.get(targetPlaylistId) else repo.playlists.bySourceUrl(canon)
+        val playlistId = existing?.id ?: repo.playlists.insert(
+            com.magistrat.musicplayer.data.Playlist(name = list.name, sourceUrl = canon)
+        )
+        if (existing == null && list.coverUrl != null) {
+            downloadCover(list.coverUrl)?.let { path ->
+                repo.playlists.get(playlistId)?.let { repo.playlists.update(it.copy(coverPath = path)) }
+            }
+        }
+        val inPlaylist = repo.playlists.tracksOnce(playlistId)
+            .map { it.title.lowercase() to it.artist.lowercase() }.toSet()
+        val basePos = repo.playlists.maxPosition(playlistId) + 1
+
+        var ok = 0
+        var skipped = 0
+        val notFound = mutableListOf<String>()
+        list.tracks.forEachIndexed { i, t ->
+            val prefix = "${i + 1}/${list.tracks.size}"
+            if ((t.title.lowercase() to t.artists.lowercase()) in inPlaylist) {
+                skipped++
+                return@forEachIndexed
+            }
+            try {
+                val trackId = repo.tracks.byTitleArtist(t.title, t.artists)?.id ?: run {
+                    report(list.name, 0f, "$prefix · ${t.mainArtist} – ${t.title}: suche auf YouTube…")
+                    val videoId = searchYoutube(t) ?: throw IllegalStateException("nicht gefunden")
+                    insertTrack(
+                        fetch(
+                            "https://www.youtube.com/watch?v=$videoId", prefix, list.name,
+                            speech = false, outDir = repo.musicDir,
+                            titleOverride = t.title, artistOverride = t.artists,
+                        )
+                    )
+                }
+                repo.addToPlaylistAt(playlistId, trackId, if (existing == null) i else basePos + ok)
+                ok++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notFound += "${t.mainArtist} – ${t.title}"
+            }
+        }
+
+        var status = when {
+            ok == 0 && notFound.isEmpty() -> "Alles schon vorhanden"
+            existing != null -> "$ok neue Titel übernommen"
+            else -> "$ok von ${list.tracks.size} Titeln übernommen"
+        }
+        if (notFound.isNotEmpty()) {
+            status += ", nicht gefunden: " + notFound.take(5).joinToString("; ") + if (notFound.size > 5) " …" else ""
+        }
+        if (skipped > 0 && existing != null) status += " ($skipped schon vorhanden)"
+        return if (ok == 0 && notFound.isNotEmpty() && skipped == 0) {
+            Result.failure(workDataOf(KEY_TITLE to list.name, KEY_ERROR to status))
+        } else {
+            Result.success(workDataOf(KEY_TITLE to list.name, KEY_STATUS to status))
+        }
+    }
+
+    /** YouTube-Suche (5 Treffer) und Auswahl des passendsten Videos. */
+    private suspend fun searchYoutube(t: SpotifyTrack): String? {
+        val query = "${t.mainArtist} - ${t.title}".replace("\"", "")
+        val response = runInterruptible {
+            ytdl.execute(
+                YoutubeDLRequest("ytsearch6:$query").apply {
+                    addOption("--flat-playlist")
+                    addOption("-J")
+                },
+                processId,
+            )
+        }
+        val entries = JSONObject(response.out).optJSONArray("entries") ?: return null
+        val candidates = (0 until entries.length()).mapNotNull { i ->
+            val e = entries.optJSONObject(i) ?: return@mapNotNull null
+            val id = e.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Spotify.Candidate(
+                id = id,
+                title = e.optString("title"),
+                channel = e.optString("channel").ifBlank { e.optString("uploader") },
+                durationSec = e.optDouble("duration", 0.0).let { if (it.isNaN()) 0.0 else it },
+            )
+        }
+        return candidates.maxByOrNull { Spotify.score(it, t) }?.id
+    }
+
+    private suspend fun downloadCover(url: String): String? = try {
+        val tmp = File(applicationContext.cacheDir, "spotify_cover.jpg")
+        (java.net.URL(url).openConnection() as java.net.HttpURLConnection).run {
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            try {
+                inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            } finally {
+                disconnect()
+            }
+        }
+        repo.saveCoverFile(tmp).also { tmp.delete() }
+    } catch (e: Exception) {
+        null
+    }
+
     // ---------- yt-dlp ----------
 
     private suspend fun readPlaylist(url: String): PlaylistInfo {
@@ -243,14 +357,22 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
      * Laedt ein einzelnes Video als MP3. [speech] = Hoerbuch/Podcast: geringere Bitrate
      * (spart viel Speicher bei langen Aufnahmen, fuer Sprache voellig ausreichend).
      */
-    private suspend fun fetch(url: String, prefix: String, displayTitle: String?, speech: Boolean, outDir: File): Fetched {
+    private suspend fun fetch(
+        url: String,
+        prefix: String,
+        displayTitle: String?,
+        speech: Boolean,
+        outDir: File,
+        titleOverride: String? = null,
+        artistOverride: String? = null,
+    ): Fetched {
         val head = if (prefix.isEmpty()) "" else "$prefix · "
         report(displayTitle ?: "", 0f, "${head}Infos werden geladen…")
         val info = runInterruptible {
             ytdl.getInfo(YoutubeDLRequest(url).apply { addOption("--no-playlist") })
         }
-        val title = info.title ?: info.fulltitle ?: "YouTube Audio"
-        val artist = info.uploader ?: ""
+        val title = titleOverride ?: info.title ?: info.fulltitle ?: "YouTube Audio"
+        val artist = artistOverride ?: info.uploader ?: ""
         val ytId = info.id
         val shownTitle = displayTitle ?: title
 
@@ -356,6 +478,7 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
 
         const val KIND_MUSIC = "music"
         const val KIND_AUDIOBOOK = "audiobook"
+        const val KIND_SPOTIFY = "spotify"
 
         /** true, wenn der Link auf eine YouTube-Playlist zeigt (oder ein Video innerhalb einer Playlist). */
         fun isPlaylistUrl(url: String): Boolean =

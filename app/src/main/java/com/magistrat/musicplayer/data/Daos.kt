@@ -23,6 +23,9 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE youtubeId = :ytId LIMIT 1")
     suspend fun byYoutubeId(ytId: String): Track?
 
+    @Query("SELECT * FROM tracks WHERE title = :title COLLATE NOCASE AND artist = :artist COLLATE NOCASE LIMIT 1")
+    suspend fun byTitleArtist(title: String, artist: String): Track?
+
     @Insert
     suspend fun insert(track: Track): Long
 
@@ -49,6 +52,9 @@ interface PlaylistDao {
 
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun get(id: Long): Playlist?
+
+    @Query("SELECT * FROM playlists WHERE sourceUrl = :url LIMIT 1")
+    suspend fun bySourceUrl(url: String): Playlist?
 
     @Insert
     suspend fun insert(p: Playlist): Long

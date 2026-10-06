@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.magistrat.musicplayer.App
+import com.magistrat.musicplayer.download.Spotify
 import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.download.YtdlUpdater
 import com.magistrat.musicplayer.update.Updater
@@ -91,7 +92,8 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
     var checkingApp by remember { mutableStateOf(false) }
     val kind by downloadKind.collectAsStateWithLifecycle()
     val asBook = kind == YoutubeDownloadWorker.KIND_AUDIOBOOK
-    val isPlaylistLink = YoutubeDownloadWorker.isPlaylistUrl(url)
+    val isSpotify = Spotify.isSpotifyUrl(url)
+    val isPlaylistLink = !isSpotify && YoutubeDownloadWorker.isPlaylistUrl(url)
     // Reine Playlist-Links: standardmaessig alles laden. Video-in-Playlist: bei Hoerbuechern ebenfalls
     // (z. B. Folge 1 einer Reihe geteilt), bei Musik nur das Video. YouTube-Mixe nie automatisch.
     LaunchedEffect(url, asBook) {
@@ -125,13 +127,13 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                     OutlinedTextField(
                         value = url,
                         onValueChange = { url = it },
-                        label = { Text("YouTube-Link") },
+                        label = { Text("YouTube- oder Spotify-Link") },
                         placeholder = { Text("https://youtu.be/…") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             if (url.isEmpty()) {
-                                IconButton(onClick = { url = extractUrl(clipboard.getText()?.text) ?: clipboard.getText()?.text.orEmpty() }) {
+                                IconButton(onClick = { url = extractUrl(clipboard.getText()?.text) ?: clipboard.getText()?.text.orEmpty().trim() }) {
                                     Icon(Icons.Default.ContentPaste, "Einfügen")
                                 }
                             } else {
@@ -139,7 +141,24 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             }
                         },
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (isSpotify) {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Spotify-Link erkannt", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    "Die Titelliste wird von Spotify übernommen, jeder Song auf YouTube gesucht und als MP3 geladen – " +
+                                        "in derselben Reihenfolge, mit Titel und Interpret von Spotify. " +
+                                        "Erneutes Übernehmen derselben Playlist ergänzt nur fehlende Songs.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        OutlinedButton(onClick = { pickingPlaylist = true }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null)
+                            Text("  Ziel: ${targetName ?: "neue Playlist (Name von Spotify)"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    if (!isSpotify) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Speichern als:", style = MaterialTheme.typography.bodyMedium)
                         FilterChip(
                             selected = !asBook,
@@ -171,7 +190,9 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                             )
                         }
                     }
-                    if (!asBook) {
+                    if (isSpotify) {
+                        // Ziel-Playlist oben bereits waehlbar
+                    } else if (!asBook) {
                         OutlinedButton(onClick = { pickingPlaylist = true }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.AutoMirrored.Filled.QueueMusic, null)
                             Text("  Danach zu Playlist: ${targetName ?: if (isPlaylistLink && wholePlaylist) "neue" else "keine"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -186,9 +207,13 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                     }
                     Button(
                         onClick = {
-                            val link = extractUrl(url.trim())
+                            val link = if (isSpotify) Spotify.canonical(url.trim()) else extractUrl(url.trim())
                             if (link == null) {
                                 Toast.makeText(context, "Bitte einen gültigen Link eingeben", Toast.LENGTH_SHORT).show()
+                            } else if (isSpotify) {
+                                YoutubeDownloadWorker.enqueue(context, link, playlistId = targetPlaylist, kind = YoutubeDownloadWorker.KIND_SPOTIFY)
+                                url = ""
+                                Toast.makeText(context, "Spotify-Übernahme gestartet", Toast.LENGTH_SHORT).show()
                             } else {
                                 YoutubeDownloadWorker.enqueue(
                                     context, link,
@@ -204,10 +229,16 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Default.Download, null)
-                        Text(if (asBook) "  Als Hörbuch herunterladen" else "  Als MP3 herunterladen")
+                        Text(
+                            when {
+                                isSpotify -> "  Von Spotify übernehmen"
+                                asBook -> "  Als Hörbuch herunterladen"
+                                else -> "  Als MP3 herunterladen"
+                            }
+                        )
                     }
                     Text(
-                        "Tipp: In der YouTube-App auf „Teilen“ → „MusicPlayer“ tippen, dann ist der Link automatisch hier.",
+                        "Tipp: In der YouTube- oder Spotify-App auf „Teilen“ → „MusicPlayer“ tippen, dann ist der Link automatisch hier.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

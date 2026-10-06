@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.magistrat.musicplayer.App
 import com.magistrat.musicplayer.data.SourceType
 import com.magistrat.musicplayer.data.Track
+import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.player.Playback
 import com.magistrat.musicplayer.player.PlayerConnection
 import kotlinx.coroutines.launch
@@ -148,6 +150,13 @@ fun PlaylistDetailScreen(playlistId: Long, onBack: () -> Unit) {
                 title = { Text(playlist?.name ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") } },
                 actions = {
+                    val src = playlist?.sourceUrl
+                    if (src != null) {
+                        IconButton(onClick = {
+                            YoutubeDownloadWorker.enqueue(context, src, playlistId = playlistId, kind = YoutubeDownloadWorker.KIND_SPOTIFY)
+                            toast(context, "Abgleich mit Spotify gestartet (Fortschritt im Download-Tab)")
+                        }) { Icon(Icons.Default.Sync, "Mit Spotify abgleichen") }
+                    }
                     IconButton(onClick = { adding = true }) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Songs hinzufügen") }
                     IconButton(onClick = { renaming = true }) { Icon(Icons.Default.Edit, "Umbenennen") }
                     IconButton(onClick = { deleting = true }) { Icon(Icons.Default.Delete, "Playlist löschen") }
