@@ -8,6 +8,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
@@ -39,7 +41,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Konstante-Bitrate-Suche: genaue Spruenge in MP3-Hoerbuechern (wichtig fuer Kapitel innerhalb einer Datei)
+        val extractors = DefaultExtractorsFactory().setConstantBitrateSeekingEnabled(true)
         player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this, extractors))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -52,7 +57,13 @@ class PlaybackService : MediaSessionService() {
             .setSeekForwardIncrementMs(30_000)
             .build()
 
+        AudioEffects.attach(this, player.audioSessionId)
+
         player.addListener(object : Player.Listener {
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                AudioEffects.attach(this@PlaybackService, audioSessionId)
+            }
+
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.containsAny(
                         Player.EVENT_IS_PLAYING_CHANGED,
@@ -191,6 +202,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        AudioEffects.release()
         PlayerWidget.update(this, null)
         saveAuto()
         scope.cancel()

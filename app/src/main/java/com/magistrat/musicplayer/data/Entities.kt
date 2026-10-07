@@ -92,6 +92,16 @@ data class Chapter(
     val durationMs: Long = 0,
     val position: Int,
     val youtubeId: String? = null,
+    /** Abschnitt innerhalb der Datei (Kapitelmarken eines langen Videos / einer m4b-Datei); null = ganze Datei */
+    val startMs: Long? = null,
+    val endMs: Long? = null,
+)
+
+/** Suchtreffer in Hoerbuch-Kapiteln */
+data class ChapterHit(
+    @Embedded val chapter: Chapter,
+    val bookTitle: String,
+    val bookCover: String?,
 )
 
 /** Woher die aktuelle Wiedergabeliste stammt. */

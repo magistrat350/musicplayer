@@ -16,7 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,18 +55,25 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SongsScreen() {
+fun SongsScreen(onSearch: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = App.instance.repo
     val tracks by remember { repo.tracks.all() }.collectAsStateWithLifecycle(emptyList())
     val player by PlayerConnection.state.collectAsStateWithLifecycle()
 
-    var query by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Track?>(null) }
-    var addingToPlaylist by remember { mutableStateOf<Track?>(null) }
-    var deleting by remember { mutableStateOf<Track?>(null) }
+    var addingToPlaylist by remember { mutableStateOf<List<Track>?>(null) }
+    var deleting by remember { mutableStateOf<List<Track>?>(null) }
+
+    // Mehrfachauswahl (lange druecken)
+    val selected = remember { mutableStateListOf<Long>() }
+    val selecting = selected.isNotEmpty()
+    fun toggle(id: Long) {
+        if (id in selected) selected.remove(id) else selected.add(id)
+    }
+    fun selectedTracks() = tracks.filter { it.id in selected }
+    BackHandler(enabled = selecting) { selected.clear() }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) scope.launch {
@@ -68,52 +82,79 @@ fun SongsScreen() {
         }
     }
 
-    val shown = if (query.isBlank()) tracks else tracks.filter {
-        it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true)
-    }
-
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            TopAppBar(
-                title = { Text("Songs") },
-                actions = {
-                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) { Icon(Icons.Default.Search, "Suchen") }
-                    IconButton(onClick = { importLauncher.launch(arrayOf("audio/*")) }) { Icon(Icons.Default.FileOpen, "Lokale Dateien importieren") }
-                },
-            )
+            if (selecting) {
+                TopAppBar(
+                    title = { Text("${selected.size} ausgewählt") },
+                    navigationIcon = { IconButton(onClick = { selected.clear() }) { Icon(Icons.Default.Close, "Auswahl beenden") } },
+                    actions = {
+                        IconButton(onClick = {
+                            if (selected.size == tracks.size) selected.clear()
+                            else {
+                                selected.clear()
+                                selected.addAll(tracks.map { it.id })
+                            }
+                        }) { Icon(Icons.Default.SelectAll, "Alle auswählen") }
+                        IconButton(onClick = { addingToPlaylist = selectedTracks() }) {
+                            Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Zur Playlist hinzufügen")
+                        }
+                        IconButton(onClick = {
+                            val list = selectedTracks()
+                            scope.launch {
+                                list.forEach { PlayerConnection.addToQueue(context, it) }
+                                toast(context, "${list.size} zur Warteschlange hinzugefügt")
+                            }
+                            selected.clear()
+                        }) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Zur Warteschlange") }
+                        IconButton(onClick = { deleting = selectedTracks() }) { Icon(Icons.Default.Delete, "Löschen") }
+                    },
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Songs") },
+                    actions = {
+                        IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Alles durchsuchen") }
+                        IconButton(onClick = { importLauncher.launch(arrayOf("audio/*")) }) { Icon(Icons.Default.FileOpen, "Lokale Dateien importieren") }
+                    },
+                )
+            }
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            if (searching) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("Titel oder Interpret") },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-            }
             LazyColumn(Modifier.fillMaxSize()) {
-                if (!searching) item(key = "continue") { ContinueRow() }
+                if (!selecting) item(key = "continue") { ContinueRow() }
                 if (tracks.isEmpty()) item(key = "empty") {
                     EmptyHint("Noch keine Songs.\nLade über den Tab „Download“ einen YouTube-Link als MP3 herunter oder importiere vorhandene Dateien.")
                 }
-                itemsIndexed(shown, key = { _, t -> t.id }) { _, t ->
+                if (tracks.size > 1 && !selecting) item(key = "hint") {
+                    Text(
+                        "Tipp: Lange drücken, um mehrere Songs auszuwählen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+                itemsIndexed(tracks, key = { _, t -> t.id }) { _, t ->
                     MediaRow(
                         title = t.title,
                         subtitle = listOf(t.artist, if (t.durationMs > 0) formatTime(t.durationMs) else "").filter { it.isNotBlank() }.joinToString(" · "),
                         coverPath = t.coverPath,
                         highlighted = player.itemId == t.id && player.source?.type != SourceType.AUDIOBOOK,
-                        onClick = { scope.launch { Playback.playSingleTrack(context, t) } },
+                        onClick = {
+                            if (selecting) toggle(t.id)
+                            else scope.launch { Playback.playSingleTrack(context, t) }
+                        },
+                        onLongClick = { toggle(t.id) },
+                        selected = if (selecting) t.id in selected else null,
                         menu = listOf(
                             "Als Nächstes spielen" to { scope.launch { PlayerConnection.playNext(context, t); toast(context, "Wird als Nächstes gespielt") }; Unit },
                             "Zur Warteschlange hinzufügen" to { scope.launch { PlayerConnection.addToQueue(context, t); toast(context, "Zur Warteschlange hinzugefügt") }; Unit },
-                            "Zur Playlist hinzufügen" to { addingToPlaylist = t },
+                            "Zur Playlist hinzufügen" to { addingToPlaylist = listOf(t) },
                             "Bearbeiten / Bild" to { editing = t },
-                            "Löschen" to { deleting = t },
+                            "Auswählen" to { toggle(t.id) },
+                            "Löschen" to { deleting = listOf(t) },
                         ),
                     )
                 }
@@ -122,19 +163,29 @@ fun SongsScreen() {
     }
 
     editing?.let { t -> EditTrackDialog(t, onDismiss = { editing = null }) }
-    addingToPlaylist?.let { t ->
-        PlaylistPickerDialog(title = "Zur Playlist hinzufügen", onDismiss = { addingToPlaylist = null }) { pid ->
+    addingToPlaylist?.let { list ->
+        PlaylistPickerDialog(
+            title = if (list.size == 1) "Zur Playlist hinzufügen" else "${list.size} Songs zur Playlist hinzufügen",
+            onDismiss = { addingToPlaylist = null },
+        ) { pid ->
             addingToPlaylist = null
             if (pid != null) scope.launch {
-                repo.addToPlaylist(pid, t.id)
-                Toast.makeText(context, "Hinzugefügt", Toast.LENGTH_SHORT).show()
+                list.forEach { repo.addToPlaylist(pid, it.id) }
+                selected.clear()
+                Toast.makeText(context, "${list.size} hinzugefügt", Toast.LENGTH_SHORT).show()
             }
         }
     }
-    deleting?.let { t ->
-        ConfirmDialog("Song löschen?", "„${t.title}“ wird aus der Bibliothek und allen Playlists entfernt.", onDismiss = { deleting = null }) {
+    deleting?.let { list ->
+        ConfirmDialog(
+            if (list.size == 1) "Song löschen?" else "${list.size} Songs löschen?",
+            if (list.size == 1) "„${list[0].title}“ wird aus der Bibliothek und allen Playlists entfernt."
+            else "Die Songs werden aus der Bibliothek und allen Playlists entfernt.",
+            onDismiss = { deleting = null },
+        ) {
             deleting = null
-            scope.launch { repo.deleteTrack(t) }
+            selected.clear()
+            App.instance.appScope.launch { list.forEach { repo.deleteTrack(it) } }
         }
     }
 }

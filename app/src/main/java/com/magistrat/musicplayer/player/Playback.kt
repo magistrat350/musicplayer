@@ -80,7 +80,7 @@ object Playback {
             }
         }
         val items = chapters.map {
-            buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath)
+            buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath, it.startMs, it.endMs)
         }
         return Prepared(source, items, index, pos)
     }
@@ -110,6 +110,12 @@ object Playback {
     suspend fun playAudiobook(context: Context, bookId: Long, startIndex: Int?, fromStart: Boolean = false) =
         play(context, prepareAudiobook(bookId, startIndex, fromStart))
 
+    /** Startet ein Hoerbuch bei einem bestimmten Kapitel (z. B. aus der Suche). */
+    suspend fun playChapter(context: Context, bookId: Long, chapterId: Long) {
+        val chapters = withContext(Dispatchers.IO) { repo.audiobooks.chaptersOnce(bookId) }
+        playAudiobook(context, bookId, chapters.indexOfFirst { it.id == chapterId }.coerceAtLeast(0))
+    }
+
     /** Springt zu einem (manuellen) Lesezeichen. */
     suspend fun playBookmark(context: Context, bm: Bookmark) {
         val source = SourceKey(bm.sourceType, bm.sourceId)
@@ -130,7 +136,7 @@ object Playback {
                 }
                 if (book == null) return
                 val items = chapters.map {
-                    buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath)
+                    buildMediaItem(ItemKey(source, it.id), it.uri, it.title, book.author.ifBlank { book.title }, book.title, book.coverPath, it.startMs, it.endMs)
                 }
                 PlayerConnection.play(context, source, items, resolveIndex(bm, chapters.map { it.id }), bm.positionMs)
             }

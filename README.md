@@ -39,6 +39,14 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
 - **Homescreen-Widget** (lange auf den Startbildschirm drücken → Widgets → MusicPlayer): zeigt die laufende bzw. zuletzt
   gehörte Playlist/Hörbuch mit Cover und Stand; ▶ setzt direkt dort fort, ohne die App zu öffnen. ⏮ ⏭ springen.
   Kopfhörer-Play-Taste und die Android-Mediensteuerung setzen ebenfalls am letzten Stand fort.
+- **Lautstärke angleichen** (ffmpeg loudnorm) und **SponsorBlock** (Werbung, Nicht-Musik-Teile in Musikvideos
+  herausschneiden) beim Download – beides im Download-Tab unter „Optionen“ abschaltbar.
+- **Equalizer** im Player (Wellen-Symbol): Voreinstellungen Normal, Bass, Sprache, Klassik, Pop, Rock, Höhen
+  oder eigene Einstellung pro Band.
+- **Kapitelmarken**: Lange YouTube-Videos mit Kapiteln werden als Hörbuch in echte Kapitel aufgeteilt;
+  m4b/m4a-Hörbücher mit eingebetteten Kapiteln (Nero oder QuickTime) ebenso.
+- **Mehrfachauswahl** in der Songliste (lange drücken): mehrere Songs zur Playlist / Warteschlange oder löschen.
+- **Suche über alles** (Lupe im Songs-Tab): Songs, Playlists, Hörbücher und Kapitel.
 - Hintergrundwiedergabe mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm.
 - Vorhandene MP3s vom Handy importieren (Songs → Ordnersymbol).
 

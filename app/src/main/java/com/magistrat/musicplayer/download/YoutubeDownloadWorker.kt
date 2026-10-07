@@ -51,6 +51,8 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         val file: File,
         val coverPath: String?,
         val durationMs: Long,
+        /** YouTube-Kapitel (Start in ms, Titel) – nur wenn der Abschnitt-Schnitt nicht veraendert wurde */
+        val chapters: List<Pair<Long, String>>,
     )
 
     private class PlaylistInfo(val title: String, val uploader: String, val entries: List<Pair<String?, String>>)
@@ -151,8 +153,28 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             val bookId = repo.audiobooks.insert(
                 Audiobook(title = f.title, author = f.artist, coverPath = f.coverPath, sourceUrl = url)
             )
+            val fileUri = Uri.fromFile(f.file).toString()
+            if (f.chapters.size >= 2) {
+                // YouTube-Kapitelmarken -> echte Kapitel (Abschnitte derselben Datei)
+                f.chapters.forEachIndexed { i, (start, chTitle) ->
+                    val end = f.chapters.getOrNull(i + 1)?.first ?: f.durationMs.takeIf { it > start }
+                    repo.audiobooks.insertChapter(
+                        Chapter(
+                            bookId = bookId,
+                            title = chTitle.ifBlank { "Kapitel ${i + 1}" },
+                            uri = fileUri,
+                            durationMs = if (end != null) end - start else 0,
+                            position = i,
+                            youtubeId = if (i == 0) f.ytId else null,
+                            startMs = start,
+                            endMs = end,
+                        )
+                    )
+                }
+                return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch mit ${f.chapters.size} Kapiteln gespeichert"))
+            }
             repo.audiobooks.insertChapter(
-                Chapter(bookId = bookId, title = f.title, uri = Uri.fromFile(f.file).toString(), durationMs = f.durationMs, position = 0, youtubeId = f.ytId)
+                Chapter(bookId = bookId, title = f.title, uri = fileUri, durationMs = f.durationMs, position = 0, youtubeId = f.ytId)
             )
             return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch gespeichert"))
         }
@@ -368,13 +390,24 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
     ): Fetched {
         val head = if (prefix.isEmpty()) "" else "$prefix · "
         report(displayTitle ?: "", 0f, "${head}Infos werden geladen…")
-        val info = runInterruptible {
-            ytdl.getInfo(YoutubeDLRequest(url).apply { addOption("--no-playlist") })
-        }
-        val title = titleOverride ?: info.title ?: info.fulltitle ?: "YouTube Audio"
-        val artist = artistOverride ?: info.uploader ?: ""
-        val ytId = info.id
+        val info = JSONObject(
+            runInterruptible {
+                ytdl.execute(YoutubeDLRequest(url).apply { addOption("--no-playlist"); addOption("-J") }, processId)
+            }.out
+        )
+        val title = titleOverride ?: info.optString("title").ifBlank { info.optString("fulltitle") }.ifBlank { "YouTube Audio" }
+        val artist = artistOverride ?: info.optString("uploader").ifBlank { info.optString("channel") }
+        val ytId = info.optString("id").takeIf { it.isNotBlank() }
+        val infoDurationMs = (info.optDouble("duration", 0.0).takeIf { !it.isNaN() } ?: 0.0).times(1000).toLong()
         val shownTitle = displayTitle ?: title
+        val ytChapters = info.optJSONArray("chapters")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { c -> (c.optDouble("start_time", 0.0) * 1000).toLong() to c.optString("title") }
+            }
+        }.orEmpty()
+        // Bei Hoerbuechern mit Kapiteln nichts herausschneiden, sonst passen die Kapitelzeiten nicht mehr
+        val keepChapters = speech && ytChapters.size >= 2
+        val opts = DownloadSettings.get(applicationContext)
 
         val base = "yt_${ytId ?: System.currentTimeMillis()}_${System.currentTimeMillis()}"
         val request = YoutubeDLRequest(url).apply {
@@ -386,6 +419,15 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             addOption("--embed-metadata")
             addOption("--write-thumbnail")
             addOption("--convert-thumbnails", "jpg")
+            if (opts.sponsorBlock && !keepChapters) {
+                // Werbung, Eigenwerbung, "Abonniert"-Aufrufe und bei Musik die Nicht-Musik-Teile entfernen
+                addOption("--sponsorblock-remove", if (speech) "sponsor,selfpromo,interaction" else "sponsor,selfpromo,interaction,music_offtopic")
+            }
+            if (opts.normalize) {
+                // Einheitliche Lautheit (EBU R128); Sprache etwas leiser als Musik
+                val target = if (speech) "I=-16:TP=-1.5:LRA=11" else "I=-14:TP=-1.5:LRA=11"
+                addOption("--postprocessor-args", "ExtractAudio+ffmpeg_o:-af loudnorm=$target -ar 44100")
+            }
             addOption("-o", "${outDir.absolutePath}/$base.%(ext)s")
         }
         report(shownTitle, 0f, "${head}$title – lädt…")
@@ -416,7 +458,8 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             ytId = ytId,
             file = mp3,
             coverPath = coverPath,
-            durationMs = if (meta.durationMs > 0) meta.durationMs else info.duration * 1000L,
+            durationMs = if (meta.durationMs > 0) meta.durationMs else infoDurationMs,
+            chapters = if (keepChapters) ytChapters else emptyList(),
         )
     }
 

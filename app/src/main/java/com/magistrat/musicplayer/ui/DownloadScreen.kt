@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -54,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.magistrat.musicplayer.App
+import com.magistrat.musicplayer.download.DownloadSettings
 import com.magistrat.musicplayer.download.Spotify
 import com.magistrat.musicplayer.download.YoutubeDownloadWorker
 import com.magistrat.musicplayer.download.YtdlUpdater
@@ -92,6 +94,11 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
     var checkingApp by remember { mutableStateOf(false) }
     val kind by downloadKind.collectAsStateWithLifecycle()
     val asBook = kind == YoutubeDownloadWorker.KIND_AUDIOBOOK
+    var settings by remember { mutableStateOf(DownloadSettings.get(context)) }
+    fun updateSettings(s: DownloadSettings) {
+        settings = s
+        DownloadSettings.set(context, s)
+    }
     val isSpotify = Spotify.isSpotifyUrl(url)
     val isPlaylistLink = !isSpotify && YoutubeDownloadWorker.isPlaylistUrl(url)
     // Reine Playlist-Links: standardmaessig alles laden. Video-in-Playlist: bei Hoerbuechern ebenfalls
@@ -258,6 +265,22 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
             }
 
             item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("Optionen", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    SettingSwitch(
+                        title = "Lautstärke angleichen",
+                        text = "Alle Downloads gleich laut (EBU R128), kein Nachregeln zwischen Songs.",
+                        checked = settings.normalize,
+                    ) { updateSettings(settings.copy(normalize = it)) }
+                    SettingSwitch(
+                        title = "SponsorBlock",
+                        text = "Werbung, Eigenwerbung und bei Musikvideos Nicht-Musik-Teile (Intro-Gerede, Outro) herausschneiden.",
+                        checked = settings.sponsorBlock,
+                    ) { updateSettings(settings.copy(sponsorBlock = it)) }
+                }
+            }
+
+            item {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(ytdlStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedButton(
@@ -313,6 +336,23 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
             targetPlaylist = id
             pickingPlaylist = false
         }
+    }
+}
+
+@Composable
+fun SettingSwitch(title: String, text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.padding(start = 12.dp))
     }
 }
 

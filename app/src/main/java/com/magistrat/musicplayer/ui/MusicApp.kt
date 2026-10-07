@@ -65,7 +65,7 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         bottomBar = {
-            if (route != "player" && route != "queue") {
+            if (route != "player" && route != "queue" && route != "equalizer" && route != "search") {
                 Column {
                     MiniPlayer(onOpen = { nav.navigate("player") { launchSingleTop = true } })
                     NavigationBar {
@@ -88,7 +88,7 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         },
     ) { padding ->
         NavHost(nav, startDestination = "songs", modifier = Modifier.padding(padding)) {
-            composable("songs") { SongsScreen() }
+            composable("songs") { SongsScreen(onSearch = { nav.navigate("search") { launchSingleTop = true } }) }
             composable("playlists") { PlaylistsScreen(onOpen = { nav.navigate("playlist/$it") }) }
             composable("audiobooks") { AudiobooksScreen(onOpen = { nav.navigate("audiobook/$it") }, onYoutube = { goTab("download") }) }
             composable("download") { DownloadScreen(sharedUrl, onSharedUrlConsumed) }
@@ -99,9 +99,21 @@ fun MusicApp(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                 AudiobookDetailScreen(it.arguments?.getLong("id") ?: 0, onBack = { nav.popBackStack() })
             }
             composable("player") {
-                PlayerScreen(onClose = { nav.popBackStack() }, onOpenQueue = { nav.navigate("queue") { launchSingleTop = true } })
+                PlayerScreen(
+                    onClose = { nav.popBackStack() },
+                    onOpenQueue = { nav.navigate("queue") { launchSingleTop = true } },
+                    onOpenEqualizer = { nav.navigate("equalizer") { launchSingleTop = true } },
+                )
             }
             composable("queue") { QueueScreen(onBack = { nav.popBackStack() }) }
+            composable("equalizer") { EqualizerScreen(onBack = { nav.popBackStack() }) }
+            composable("search") {
+                SearchScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenPlaylist = { nav.navigate("playlist/$it") },
+                    onOpenAudiobook = { nav.navigate("audiobook/$it") },
+                )
+            }
         }
     }
 }

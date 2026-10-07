@@ -23,6 +23,9 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE youtubeId = :ytId LIMIT 1")
     suspend fun byYoutubeId(ytId: String): Track?
 
+    @Query("SELECT * FROM tracks WHERE title LIKE '%' || :q || '%' OR artist LIKE '%' || :q || '%' ORDER BY title COLLATE NOCASE LIMIT 100")
+    suspend fun search(q: String): List<Track>
+
     @Query("SELECT * FROM tracks WHERE title = :title COLLATE NOCASE AND artist = :artist COLLATE NOCASE LIMIT 1")
     suspend fun byTitleArtist(title: String, artist: String): Track?
 
@@ -52,6 +55,12 @@ interface PlaylistDao {
 
     @Query("SELECT * FROM playlists WHERE id = :id")
     suspend fun get(id: Long): Playlist?
+
+    @Query(
+        "SELECT p.*, (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlistId = p.id) AS trackCount " +
+            "FROM playlists p WHERE p.name LIKE '%' || :q || '%' ORDER BY p.name COLLATE NOCASE LIMIT 50"
+    )
+    suspend fun search(q: String): List<PlaylistWithCount>
 
     @Query("SELECT * FROM playlists WHERE sourceUrl = :url LIMIT 1")
     suspend fun bySourceUrl(url: String): Playlist?
@@ -132,6 +141,16 @@ interface AudiobookDao {
 
     @Insert
     suspend fun insertChapter(chapter: Chapter): Long
+
+    @Query("SELECT * FROM audiobooks WHERE title LIKE '%' || :q || '%' OR author LIKE '%' || :q || '%' ORDER BY title COLLATE NOCASE LIMIT 50")
+    suspend fun search(q: String): List<Audiobook>
+
+    @Query(
+        "SELECT c.*, b.title AS bookTitle, b.coverPath AS bookCover FROM chapters c " +
+            "INNER JOIN audiobooks b ON b.id = c.bookId " +
+            "WHERE c.title LIKE '%' || :q || '%' ORDER BY b.title COLLATE NOCASE, c.position LIMIT 100"
+    )
+    suspend fun searchChapters(q: String): List<ChapterHit>
 
     @Query("SELECT * FROM audiobooks WHERE sourceUrl = :url LIMIT 1")
     suspend fun bySourceUrl(url: String): Audiobook?

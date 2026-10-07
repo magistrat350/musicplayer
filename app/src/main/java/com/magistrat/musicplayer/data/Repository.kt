@@ -180,15 +180,34 @@ class Repository(private val context: Context, private val db: AppDatabase) {
                 coverPath = first.picture?.let { saveCoverBytes(it) },
             )
         )
-        val chapters = files.mapIndexed { i, (uri, name) ->
+        val chapters = mutableListOf<Chapter>()
+        files.forEachIndexed { i, (uri, name) ->
             val m = if (i == 0) first else readMeta(uri, withPicture = false)
-            Chapter(
-                bookId = bookId,
-                title = m.title ?: name.substringBeforeLast('.'),
-                uri = uri.toString(),
-                durationMs = m.durationMs,
-                position = i,
-            )
+            val fileTitle = m.title ?: name.substringBeforeLast('.')
+            // m4b/m4a mit eingebetteten Kapitelmarken -> jedes Kapitel als eigener Abschnitt
+            val marks = Mp4Chapters.read(context, uri)
+            if (marks.size >= 2) {
+                marks.forEachIndexed { j, mark ->
+                    val end = marks.getOrNull(j + 1)?.startMs ?: m.durationMs.takeIf { it > mark.startMs }
+                    chapters += Chapter(
+                        bookId = bookId,
+                        title = mark.title.ifBlank { "$fileTitle – Kapitel ${j + 1}" },
+                        uri = uri.toString(),
+                        durationMs = if (end != null) end - mark.startMs else 0,
+                        position = chapters.size,
+                        startMs = mark.startMs,
+                        endMs = end,
+                    )
+                }
+            } else {
+                chapters += Chapter(
+                    bookId = bookId,
+                    title = fileTitle,
+                    uri = uri.toString(),
+                    durationMs = m.durationMs,
+                    position = chapters.size,
+                )
+            }
         }
         audiobooks.insertChapters(chapters)
         return bookId

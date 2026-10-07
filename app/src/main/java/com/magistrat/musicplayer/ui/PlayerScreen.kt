@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -58,13 +59,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import com.magistrat.musicplayer.data.SourceType
+import com.magistrat.musicplayer.player.AudioEffects
 import com.magistrat.musicplayer.player.PlayerConnection
 import kotlinx.coroutines.launch
 
 private val SPEEDS = listOf(0.75f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f)
 
 @Composable
-fun PlayerScreen(onClose: () -> Unit, onOpenQueue: () -> Unit) {
+fun PlayerScreen(onClose: () -> Unit, onOpenQueue: () -> Unit, onOpenEqualizer: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by PlayerConnection.state.collectAsStateWithLifecycle()
@@ -75,6 +77,7 @@ fun PlayerScreen(onClose: () -> Unit, onOpenQueue: () -> Unit) {
     var sleepMenu by remember { mutableStateOf(false) }
     val sleep by PlayerConnection.sleepTimer.collectAsStateWithLifecycle()
     val now by rememberTicker()
+    val eqState by AudioEffects.state.collectAsStateWithLifecycle()
     val isBook = state.source?.type == SourceType.AUDIOBOOK
 
     Column(
@@ -213,6 +216,12 @@ fun PlayerScreen(onClose: () -> Unit, onOpenQueue: () -> Unit) {
                 }
             }
             IconButton(onClick = onOpenQueue) { Icon(Icons.AutoMirrored.Filled.QueueMusic, "Warteschlange") }
+            IconButton(onClick = onOpenEqualizer) {
+                Icon(
+                    Icons.Default.GraphicEq, "Equalizer",
+                    tint = if (eqState.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(onClick = { PlayerConnection.cycleRepeat() }) {
                 Icon(
                     if (state.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,

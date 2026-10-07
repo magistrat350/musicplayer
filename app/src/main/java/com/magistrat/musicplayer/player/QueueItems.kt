@@ -1,6 +1,7 @@
 package com.magistrat.musicplayer.player
 
 import android.net.Uri
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -34,7 +35,21 @@ fun buildMediaItem(
     artist: String,
     album: String?,
     coverPath: String?,
-): MediaItem = buildMediaItem(key.encode(), uri, title, artist, album, coverPath)
+    startMs: Long? = null,
+    endMs: Long? = null,
+): MediaItem {
+    val item = buildMediaItem(key.encode(), uri, title, artist, album, coverPath)
+    if (startMs == null && endMs == null) return item
+    // Kapitel = Abschnitt einer laengeren Datei
+    return item.buildUpon()
+        .setClippingConfiguration(
+            MediaItem.ClippingConfiguration.Builder()
+                .setStartPositionMs(startMs ?: 0)
+                .setEndPositionMs(endMs ?: C.TIME_END_OF_SOURCE)
+                .build()
+        )
+        .build()
+}
 
 fun buildMediaItem(
     mediaId: String,

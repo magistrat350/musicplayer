@@ -2,7 +2,9 @@ package com.magistrat.musicplayer.ui
 
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -100,6 +103,7 @@ fun rememberPlayerPosition(): State<Long> {
 }
 
 /** Listeneintrag mit Cover, Titel, Untertitel und Kontextmenue. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MediaRow(
     title: String,
@@ -111,13 +115,16 @@ fun MediaRow(
     menu: List<Pair<String, () -> Unit>> = emptyList(),
     modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    /** null = keine Auswahl aktiv; sonst wird statt des Menues eine Checkbox gezeigt */
+    selected: Boolean? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier
-            .background(MaterialTheme.colorScheme.surface)
+            .background(if (selected == true) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -138,7 +145,9 @@ fun MediaRow(
                 Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (menu.isNotEmpty()) {
+        if (selected != null) {
+            Checkbox(checked = selected, onCheckedChange = { onClick() })
+        } else if (menu.isNotEmpty()) {
             Box {
                 IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "Menü") }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
