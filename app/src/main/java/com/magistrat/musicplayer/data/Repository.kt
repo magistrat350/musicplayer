@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
@@ -91,8 +92,9 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     suspend fun deleteTrack(track: Track) = withContext(Dispatchers.IO) {
         tracks.delete(track)
         deleteCover(track.coverPath)
-        val uri = Uri.parse(track.uri)
-        if (uri.scheme == "file") uri.path?.let { p -> if (p.startsWith(musicDir.absolutePath)) File(p).delete() }
+        // Nur selbst heruntergeladene Dateien loeschen, importierte Originale bleiben
+        if (track.youtubeId != null) deleteDownloadedFile(track.uri)
+        else deleteDownloadedFile(track.uri, appStorageOnly = true)
     }
 
     /** Importiert lokale Audiodateien (z. B. vorhandene MP3s) in die Bibliothek. */
@@ -223,15 +225,144 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         get() = File(musicDir, "audiobooks").apply { mkdirs() }
 
     suspend fun deleteAudiobook(b: Audiobook) = withContext(Dispatchers.IO) {
-        // Von YouTube geladene Kapitel liegen im App-Speicher -> mitloeschen (importierte Originaldateien bleiben)
-        audiobooks.chaptersOnce(b.id).forEach { c ->
-            val uri = Uri.parse(c.uri)
-            if (uri.scheme == "file") uri.path?.let { p -> if (p.startsWith(musicDir.absolutePath)) File(p).delete() }
+        // Von YouTube geladene Kapitel mitloeschen (importierte Originaldateien bleiben)
+        audiobooks.chaptersOnce(b.id).map { it.uri }.distinct().forEach { uri ->
+            deleteDownloadedFile(uri, appStorageOnly = b.sourceUrl == null)
         }
         audiobooks.delete(b)
         bookmarks.deleteForSource(SourceType.AUDIOBOOK, b.id)
         deleteCover(b.coverPath)
     }
+
+    // ---------- Speicherort ----------
+
+    private val storagePrefs get() = context.getSharedPreferences("storage", Context.MODE_PRIVATE)
+
+    /** Vom Nutzer gewaehlter Download-Ordner (oder null = App-Speicher). */
+    val downloadTree: Uri?
+        get() = storagePrefs.getString("tree", null)?.let { Uri.parse(it) }?.takeIf { tree ->
+            context.contentResolver.persistedUriPermissions.any { it.uri == tree && it.isWritePermission }
+        }
+
+    fun setDownloadTree(tree: Uri?) {
+        if (tree != null) {
+            context.contentResolver.takePersistableUriPermission(
+                tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        val old = storagePrefs.getString("tree", null)?.let { Uri.parse(it) }
+        storagePrefs.edit().putString("tree", tree?.toString()).apply()
+        // Alte Freigabe zurueckgeben (Dateien darin bleiben natuerlich nutzbar, solange auch Lesezugriff besteht)
+        if (old != null && old != tree) {
+            try {
+                context.contentResolver.releasePersistableUriPermission(old, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Lesbarer Name des gewaehlten Ordners, z. B. "MusicPlayer". */
+    fun downloadFolderName(): String? = downloadTree?.let { DocumentFile.fromTreeUri(context, it)?.name }
+
+    /**
+     * Legt eine fertig heruntergeladene Datei am gewaehlten Speicherort ab.
+     * Ohne gewaehlten Ordner bleibt sie im App-Speicher. Liefert die URI zum Abspielen.
+     */
+    suspend fun storeDownload(file: File, name: String, subPath: List<String>): String = withContext(Dispatchers.IO) {
+        val tree = downloadTree ?: return@withContext Uri.fromFile(file).toString()
+        try {
+            val root = DocumentFile.fromTreeUri(context, tree) ?: throw IllegalStateException("Ordner nicht verfügbar")
+            val dir = ensureDir(root, subPath)
+            val target = dir.createFile("audio/mpeg", safeFileName(name)) ?: throw IllegalStateException("Datei konnte nicht angelegt werden")
+            context.contentResolver.openOutputStream(target.uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                ?: throw IllegalStateException("Datei konnte nicht geschrieben werden")
+            file.delete()
+            target.uri.toString()
+        } catch (e: Exception) {
+            // Ordner nicht mehr erreichbar -> Datei bleibt im App-Speicher, nichts geht verloren
+            Uri.fromFile(file).toString()
+        }
+    }
+
+    private fun ensureDir(root: DocumentFile, path: List<String>): DocumentFile {
+        var dir = root
+        for (raw in path) {
+            val name = safeFileName(raw)
+            dir = dir.findFile(name)?.takeIf { it.isDirectory } ?: dir.createDirectory(name)
+                ?: throw IllegalStateException("Ordner $name konnte nicht angelegt werden")
+        }
+        return dir
+    }
+
+    /** Dateinamen ohne verbotene Zeichen, nicht zu lang. */
+    fun safeFileName(name: String): String =
+        name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").replace(Regex("\\s+"), " ").trim().trim('.').take(120).ifBlank { "Audio" }
+
+    private fun isInAppStorage(uri: String): Boolean {
+        val u = Uri.parse(uri)
+        return u.scheme == "file" && u.path?.startsWith(musicDir.absolutePath) == true
+    }
+
+    private fun deleteDownloadedFile(uri: String, appStorageOnly: Boolean = false) {
+        val u = Uri.parse(uri)
+        try {
+            when {
+                u.scheme == "file" -> if (isInAppStorage(uri)) u.path?.let { File(it).delete() }
+                u.scheme == "content" && !appStorageOnly -> DocumentsContract.deleteDocument(context.contentResolver, u)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Anzahl heruntergeladener Dateien, die noch im (versteckten) App-Speicher liegen. */
+    suspend fun countFilesInAppStorage(): Int = withContext(Dispatchers.IO) {
+        tracks.allOnce().count { isInAppStorage(it.uri) } +
+            audiobooks.allChaptersOnce().map { it.uri }.distinct().count { isInAppStorage(it) }
+    }
+
+    /**
+     * Verschiebt alle Downloads aus dem App-Speicher in den gewaehlten Ordner.
+     * Playlists, Lesezeichen und Fortschritt bleiben erhalten (die IDs aendern sich nicht).
+     */
+    suspend fun moveDownloadsToTree(onProgress: (done: Int, total: Int) -> Unit): Int = withContext(Dispatchers.IO) {
+        if (downloadTree == null) return@withContext 0
+        val trackList = tracks.allOnce().filter { isInAppStorage(it.uri) }
+        val chapterGroups = audiobooks.allChaptersOnce().filter { isInAppStorage(it.uri) }.groupBy { it.uri }
+        val total = trackList.size + chapterGroups.size
+        var done = 0
+        var moved = 0
+
+        for (t in trackList) {
+            val file = File(Uri.parse(t.uri).path!!)
+            if (file.exists()) {
+                val newUri = storeDownload(file, musicFileName(t.title, t.artist), listOf("Musik"))
+                if (newUri != t.uri) {
+                    tracks.update(t.copy(uri = newUri))
+                    moved++
+                }
+            }
+            withContext(Dispatchers.Main) { onProgress(++done, total) }
+        }
+        for ((uri, chapters) in chapterGroups) {
+            val file = File(Uri.parse(uri).path!!)
+            val first = chapters.minBy { it.position }
+            val book = audiobooks.get(first.bookId)
+            if (file.exists()) {
+                val name = if (chapters.size > 1) (book?.title ?: first.title) else "%03d - %s".format(first.position + 1, first.title)
+                val newUri = storeDownload(file, name, listOf("Hörbücher", book?.title ?: "Hörbuch"))
+                if (newUri != uri) {
+                    audiobooks.replaceChapterUri(uri, newUri)
+                    moved++
+                }
+            }
+            withContext(Dispatchers.Main) { onProgress(++done, total) }
+        }
+        moved
+    }
+
+    /** "Interpret - Titel", ausser der Titel enthaelt den Interpreten schon (typisch bei YouTube). */
+    fun musicFileName(title: String, artist: String): String =
+        if (artist.isBlank() || title.contains(" - ") || title.contains(artist, ignoreCase = true)) title else "$artist - $title"
 
     // ---------- Helfer ----------
 

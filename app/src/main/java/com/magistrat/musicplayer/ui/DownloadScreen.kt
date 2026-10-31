@@ -264,6 +264,8 @@ fun DownloadScreen(initialUrl: String?, onUrlConsumed: () -> Unit) {
                 DownloadCard(info, onCancel = { workManager.cancelWorkById(info.id) })
             }
 
+            item { StorageSection() }
+
             item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("Optionen", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)

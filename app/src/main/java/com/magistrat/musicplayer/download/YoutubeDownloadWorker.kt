@@ -135,7 +135,8 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         Track(
             title = f.title,
             artist = f.artist,
-            uri = Uri.fromFile(f.file).toString(),
+            // Am gewaehlten Speicherort ablegen (Musik/Interpret - Titel.mp3), sonst App-Speicher
+            uri = repo.storeDownload(f.file, repo.musicFileName(f.title, f.artist), listOf("Musik")),
             coverPath = f.coverPath,
             durationMs = f.durationMs,
             youtubeId = f.ytId,
@@ -153,7 +154,7 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             val bookId = repo.audiobooks.insert(
                 Audiobook(title = f.title, author = f.artist, coverPath = f.coverPath, sourceUrl = url)
             )
-            val fileUri = Uri.fromFile(f.file).toString()
+            val fileUri = repo.storeDownload(f.file, f.title, listOf("Hörbücher", f.title))
             if (f.chapters.size >= 2) {
                 // YouTube-Kapitelmarken -> echte Kapitel (Abschnitte derselben Datei)
                 f.chapters.forEachIndexed { i, (start, chTitle) ->
@@ -201,11 +202,15 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             val prefix = "${n + 1}/${todo.size}"
             try {
                 val f = fetch(entry.second, prefix, list.title, speech = true, outDir = outDir)
+                val bookTitle = repo.audiobooks.get(bookId)?.title ?: list.title
+                val fileUri = repo.storeDownload(
+                    f.file, "%03d - %s".format(basePos + n + 1, f.title), listOf("Hörbücher", bookTitle),
+                )
                 repo.audiobooks.insertChapter(
                     Chapter(
                         bookId = bookId,
                         title = f.title,
-                        uri = Uri.fromFile(f.file).toString(),
+                        uri = fileUri,
                         durationMs = f.durationMs,
                         position = basePos + n,
                         youtubeId = f.ytId ?: entry.first,

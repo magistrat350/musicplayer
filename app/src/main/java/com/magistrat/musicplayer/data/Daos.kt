@@ -152,6 +152,12 @@ interface AudiobookDao {
     )
     suspend fun searchChapters(q: String): List<ChapterHit>
 
+    @Query("SELECT * FROM chapters")
+    suspend fun allChaptersOnce(): List<Chapter>
+
+    @Query("UPDATE chapters SET uri = :newUri WHERE uri = :oldUri")
+    suspend fun replaceChapterUri(oldUri: String, newUri: String)
+
     @Query("SELECT * FROM audiobooks WHERE sourceUrl = :url LIMIT 1")
     suspend fun bySourceUrl(url: String): Audiobook?
 

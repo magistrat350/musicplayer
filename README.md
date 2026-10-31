@@ -47,6 +47,10 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
   m4b/m4a-Hörbücher mit eingebetteten Kapiteln (Nero oder QuickTime) ebenso.
 - **Mehrfachauswahl** in der Songliste (lange drücken): mehrere Songs zur Playlist / Warteschlange oder löschen.
 - **Suche über alles** (Lupe im Songs-Tab): Songs, Playlists, Hörbücher und Kapitel.
+- **Speicherort wählbar** (Download-Tab → Speicherort): einen Ordner wie `Music/MusicPlayer` wählen. Songs landen dann in
+  `Musik/Interpret - Titel.mp3`, Hörbücher in `Hörbücher/<Titel>/001 - Folge.mp3` – sichtbar im Dateimanager, am PC und
+  für andere Musik-Apps, und sie bleiben beim Deinstallieren erhalten. „Vorhandene Dateien verschieben“ zieht bereits
+  Geladenes um (Playlists, Lesezeichen und Fortschritt bleiben erhalten).
 - Hintergrundwiedergabe mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm.
 - Vorhandene MP3s vom Handy importieren (Songs → Ordnersymbol).
 
