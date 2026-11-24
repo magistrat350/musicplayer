@@ -179,8 +179,9 @@ fun SongsScreen(onSearch: () -> Unit) {
     deleting?.let { list ->
         ConfirmDialog(
             if (list.size == 1) "Song löschen?" else "${list.size} Songs löschen?",
-            if (list.size == 1) "„${list[0].title}“ wird aus der Bibliothek und allen Playlists entfernt."
-            else "Die Songs werden aus der Bibliothek und allen Playlists entfernt.",
+            (if (list.size == 1) "„${list[0].title}“ wird aus der Bibliothek und allen Playlists entfernt."
+            else "Die Songs werden aus der Bibliothek und allen Playlists entfernt.") +
+                " Heruntergeladene Dateien und Dateien im gewählten Speicherort werden dabei mitgelöscht.",
             onDismiss = { deleting = null },
         ) {
             deleting = null

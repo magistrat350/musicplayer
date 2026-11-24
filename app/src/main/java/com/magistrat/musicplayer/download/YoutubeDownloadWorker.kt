@@ -23,6 +23,7 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -131,17 +132,20 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         return summary(list.title, ok, failed, list.entries.size)
     }
 
-    private suspend fun insertTrack(f: Fetched): Long = repo.tracks.insert(
-        Track(
-            title = f.title,
-            artist = f.artist,
-            // Am gewaehlten Speicherort ablegen (Musik/Interpret - Titel.mp3), sonst App-Speicher
-            uri = repo.storeDownload(f.file, repo.musicFileName(f.title, f.artist), listOf("Musik")),
-            coverPath = f.coverPath,
-            durationMs = f.durationMs,
-            youtubeId = f.ytId,
+    // storeLock: Ablegen + Eintragen in einem Schritt, damit die Ordner-Suche die Datei nicht doppelt uebernimmt
+    private suspend fun insertTrack(f: Fetched): Long = repo.storeLock.withLock {
+        repo.tracks.insert(
+            Track(
+                title = f.title,
+                artist = f.artist,
+                // Am gewaehlten Speicherort ablegen (Musik/Interpret - Titel.mp3), sonst App-Speicher
+                uri = repo.storeDownload(f.file, repo.musicFileName(f.title, f.artist), listOf("Musik")),
+                coverPath = f.coverPath,
+                durationMs = f.durationMs,
+                youtubeId = f.ytId,
+            )
         )
-    )
+    }
 
     // ---------- Hoerbuch ----------
 
@@ -151,33 +155,7 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         if (!fullPlaylist) {
             // Einzelnes (meist langes) Video -> Hoerbuch mit einem Kapitel
             val f = fetch(url, prefix = "", displayTitle = null, speech = true, outDir = outDir)
-            val bookId = repo.audiobooks.insert(
-                Audiobook(title = f.title, author = f.artist, coverPath = f.coverPath, sourceUrl = url)
-            )
-            val fileUri = repo.storeDownload(f.file, f.title, listOf("Hörbücher", f.title))
-            if (f.chapters.size >= 2) {
-                // YouTube-Kapitelmarken -> echte Kapitel (Abschnitte derselben Datei)
-                f.chapters.forEachIndexed { i, (start, chTitle) ->
-                    val end = f.chapters.getOrNull(i + 1)?.first ?: f.durationMs.takeIf { it > start }
-                    repo.audiobooks.insertChapter(
-                        Chapter(
-                            bookId = bookId,
-                            title = chTitle.ifBlank { "Kapitel ${i + 1}" },
-                            uri = fileUri,
-                            durationMs = if (end != null) end - start else 0,
-                            position = i,
-                            youtubeId = if (i == 0) f.ytId else null,
-                            startMs = start,
-                            endMs = end,
-                        )
-                    )
-                }
-                return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch mit ${f.chapters.size} Kapiteln gespeichert"))
-            }
-            repo.audiobooks.insertChapter(
-                Chapter(bookId = bookId, title = f.title, uri = fileUri, durationMs = f.durationMs, position = 0, youtubeId = f.ytId)
-            )
-            return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch gespeichert"))
+            return repo.storeLock.withLock { saveSingleAudiobook(url, f) }
         }
 
         // Einheitliche Playlist-URL, damit "Neue Folgen laden" dasselbe Hoerbuch wiederfindet
@@ -203,19 +181,21 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
             try {
                 val f = fetch(entry.second, prefix, list.title, speech = true, outDir = outDir)
                 val bookTitle = repo.audiobooks.get(bookId)?.title ?: list.title
-                val fileUri = repo.storeDownload(
-                    f.file, "%03d - %s".format(basePos + n + 1, f.title), listOf("Hörbücher", bookTitle),
-                )
-                repo.audiobooks.insertChapter(
-                    Chapter(
-                        bookId = bookId,
-                        title = f.title,
-                        uri = fileUri,
-                        durationMs = f.durationMs,
-                        position = basePos + n,
-                        youtubeId = f.ytId ?: entry.first,
+                repo.storeLock.withLock {
+                    val fileUri = repo.storeDownload(
+                        f.file, "%03d - %s".format(basePos + n + 1, f.title), listOf("Hörbücher", bookTitle),
                     )
-                )
+                    repo.audiobooks.insertChapter(
+                        Chapter(
+                            bookId = bookId,
+                            title = f.title,
+                            uri = fileUri,
+                            durationMs = f.durationMs,
+                            position = basePos + n,
+                            youtubeId = f.ytId ?: entry.first,
+                        )
+                    )
+                }
                 // Erstes Vorschaubild wird zum Hoerbuch-Cover
                 val book = repo.audiobooks.get(bookId)
                 if (book != null && book.coverPath == null && f.coverPath != null) {
@@ -232,6 +212,39 @@ class YoutubeDownloadWorker(context: Context, params: WorkerParameters) : Corout
         }
         if (ok == 0 && existingBook == null) repo.audiobooks.get(bookId)?.let { repo.audiobooks.delete(it) }
         return summary(list.title, ok, failed, todo.size, unit = if (existingBook != null) "neuen Folgen" else "Folgen")
+    }
+
+
+    /** Einzelnes Video als Hoerbuch speichern (mit YouTube-Kapitelmarken, falls vorhanden). */
+    private suspend fun saveSingleAudiobook(url: String, f: Fetched): Result {
+        val bookId = repo.audiobooks.insert(
+            Audiobook(title = f.title, author = f.artist, coverPath = f.coverPath, sourceUrl = url)
+        )
+        val fileUri = repo.storeDownload(f.file, f.title, listOf("Hörbücher", f.title))
+
+        if (f.chapters.size >= 2) {
+            // YouTube-Kapitelmarken -> echte Kapitel (Abschnitte derselben Datei)
+            f.chapters.forEachIndexed { i, (start, chTitle) ->
+                val end = f.chapters.getOrNull(i + 1)?.first ?: f.durationMs.takeIf { it > start }
+                repo.audiobooks.insertChapter(
+                    Chapter(
+                        bookId = bookId,
+                        title = chTitle.ifBlank { "Kapitel ${i + 1}" },
+                        uri = fileUri,
+                        durationMs = if (end != null) end - start else 0,
+                        position = i,
+                        youtubeId = if (i == 0) f.ytId else null,
+                        startMs = start,
+                        endMs = end,
+                    )
+                )
+            }
+            return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch mit ${f.chapters.size} Kapiteln gespeichert"))
+        }
+        repo.audiobooks.insertChapter(
+            Chapter(bookId = bookId, title = f.title, uri = fileUri, durationMs = f.durationMs, position = 0, youtubeId = f.ytId)
+        )
+        return Result.success(workDataOf(KEY_TITLE to f.title, KEY_STATUS to "Als Hörbuch gespeichert"))
     }
 
     // ---------- Spotify ----------

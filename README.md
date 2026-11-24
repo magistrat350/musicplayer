@@ -51,6 +51,9 @@ Android-App (Kotlin, Jetpack Compose, Media3) für Musik und Hörbücher.
   `Musik/Interpret - Titel.mp3`, Hörbücher in `Hörbücher/<Titel>/001 - Folge.mp3` – sichtbar im Dateimanager, am PC und
   für andere Musik-Apps, und sie bleiben beim Deinstallieren erhalten. „Vorhandene Dateien verschieben“ zieht bereits
   Geladenes um (Playlists, Lesezeichen und Fortschritt bleiben erhalten).
+  Dateien, die du selbst in den Ordner legst (z. B. am PC hineinkopiert), übernimmt die App beim Öffnen automatisch:
+  `Hörbücher/<Ordner>/` wird je ein Hörbuch (neue Dateien in einem bekannten Hörbuch-Ordner werden als Kapitel angehängt),
+  alles andere landet bei den Songs. Zusätzlich gibt es „Ordner jetzt durchsuchen“.
 - Hintergrundwiedergabe mit Steuerung in der Benachrichtigung und auf dem Sperrbildschirm.
 - Vorhandene MP3s vom Handy importieren (Songs → Ordnersymbol).
 

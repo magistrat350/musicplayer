@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.util.Log
 import com.magistrat.musicplayer.data.AppDatabase
+import com.magistrat.musicplayer.data.FolderScanner
 import com.magistrat.musicplayer.data.Repository
 import com.magistrat.musicplayer.download.YtdlUpdater
 import com.magistrat.musicplayer.widget.PlayerWidget
@@ -23,6 +24,9 @@ class App : Application() {
         private set
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Uebernimmt Dateien, die von aussen in den gewaehlten Speicherort gelegt wurden. */
+    val folderScanner by lazy { FolderScanner(this, repo) }
 
     /** Wird abgeschlossen, sobald yt-dlp und ffmpeg einsatzbereit sind (true) oder fehlgeschlagen sind (false). */
     val ytdlReady = CompletableDeferred<Boolean>()

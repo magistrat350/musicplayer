@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -46,6 +47,17 @@ fun StorageSection() {
     var moving by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var resultText by remember { mutableStateOf<String?>(null) }
     var confirmMove by remember { mutableStateOf(false) }
+    var scanning by remember { mutableStateOf(false) }
+
+    fun scanNow(showResult: Boolean) {
+        scanning = true
+        app.appScope.launch(Dispatchers.Main) {
+            val r = app.folderScanner.scan()
+            scanning = false
+            if (showResult || !r.isEmpty) resultText = "Ordner durchsucht: ${r.describe()}"
+            refresh++
+        }
+    }
 
     LaunchedEffect(refresh) {
         folderName = withContext(Dispatchers.IO) { repo.downloadFolderName() }
@@ -58,6 +70,8 @@ fun StorageSection() {
                 repo.setDownloadTree(uri)
                 resultText = null
                 refresh++
+                // Dateien, die schon im Ordner liegen, uebernehmen
+                scanNow(showResult = false)
                 // Direkt anbieten, das bisher Geladene mitzunehmen
                 app.appScope.launch {
                     if (repo.countFilesInAppStorage() > 0) withContext(Dispatchers.Main) { confirmMove = true }
@@ -85,6 +99,7 @@ fun StorageSection() {
             moving = null
             resultText = if (moved < 0) "Verschieben fehlgeschlagen" else "$moved Datei(en) verschoben"
             refresh++
+            scanNow(showResult = false)
         }
     }
 
@@ -118,6 +133,22 @@ fun StorageSection() {
                     refresh++
                 }, enabled = moving == null) { Text("App-Speicher nutzen") }
             }
+        }
+        if (folderName != null) {
+            OutlinedButton(
+                onClick = { scanNow(showResult = true) },
+                enabled = !scanning && moving == null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Refresh, null)
+                Text(if (scanning) "  Durchsuche…" else "  Ordner jetzt nach neuen Dateien durchsuchen")
+            }
+            Text(
+                "Dateien, die du selbst in den Ordner legst (z. B. am PC), übernimmt die App automatisch beim Öffnen: " +
+                    "„Hörbücher/<Ordner>“ wird je ein Hörbuch, alles andere landet bei den Songs.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         if (folderName != null && inAppStorage > 0 && moving == null) {
             OutlinedButton(onClick = { confirmMove = true }, modifier = Modifier.fillMaxWidth()) {

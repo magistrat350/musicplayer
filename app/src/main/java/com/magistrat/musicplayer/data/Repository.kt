@@ -11,6 +11,8 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -51,7 +53,7 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         }
     }
 
-    private fun saveCoverBytes(bytes: ByteArray): String? =
+    fun saveCoverBytes(bytes: ByteArray): String? =
         try {
             decodeScaled(bytes)?.let { writeCover(it) }
         } catch (e: Exception) {
@@ -92,8 +94,9 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     suspend fun deleteTrack(track: Track) = withContext(Dispatchers.IO) {
         tracks.delete(track)
         deleteCover(track.coverPath)
-        // Nur selbst heruntergeladene Dateien loeschen, importierte Originale bleiben
-        if (track.youtubeId != null) deleteDownloadedFile(track.uri)
+        // Selbst heruntergeladene Dateien und Dateien im eigenen Speicherort loeschen
+        // (sonst wuerde die Ordner-Suche sie wieder uebernehmen); importierte Originale anderswo bleiben
+        if (track.youtubeId != null || isInDownloadTree(track.uri)) deleteDownloadedFile(track.uri)
         else deleteDownloadedFile(track.uri, appStorageOnly = true)
     }
 
@@ -172,9 +175,9 @@ class Repository(private val context: Context, private val db: AppDatabase) {
         createBook(files, fallbackTitle = dir.name)
     }
 
-    private suspend fun createBook(files: List<Pair<Uri, String>>, fallbackTitle: String?): Long {
+    suspend fun createBook(files: List<Pair<Uri, String>>, fallbackTitle: String?, titleOverride: String? = null): Long {
         val first = readMeta(files.first().first)
-        val title = first.album ?: fallbackTitle ?: files.first().second.substringBeforeLast('.')
+        val title = titleOverride ?: first.album ?: fallbackTitle ?: files.first().second.substringBeforeLast('.')
         val bookId = audiobooks.insert(
             Audiobook(
                 title = title,
@@ -227,7 +230,7 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     suspend fun deleteAudiobook(b: Audiobook) = withContext(Dispatchers.IO) {
         // Von YouTube geladene Kapitel mitloeschen (importierte Originaldateien bleiben)
         audiobooks.chaptersOnce(b.id).map { it.uri }.distinct().forEach { uri ->
-            deleteDownloadedFile(uri, appStorageOnly = b.sourceUrl == null)
+            deleteDownloadedFile(uri, appStorageOnly = b.sourceUrl == null && !isInDownloadTree(uri))
         }
         audiobooks.delete(b)
         bookmarks.deleteForSource(SourceType.AUDIOBOOK, b.id)
@@ -235,6 +238,12 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     }
 
     // ---------- Speicherort ----------
+
+    /**
+     * Sperre fuer "Datei im Ordner ablegen + in die Datenbank eintragen".
+     * Die Ordner-Suche haelt sie ebenfalls, damit eine gerade geladene Datei nicht doppelt uebernommen wird.
+     */
+    val storeLock = Mutex()
 
     private val storagePrefs get() = context.getSharedPreferences("storage", Context.MODE_PRIVATE)
 
@@ -298,6 +307,20 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     fun safeFileName(name: String): String =
         name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").replace(Regex("\\s+"), " ").trim().trim('.').take(120).ifBlank { "Audio" }
 
+    /** Liegt die Datei im vom Nutzer gewaehlten Speicherort? */
+    fun isInDownloadTree(uri: String): Boolean {
+        val tree = downloadTree ?: return false
+        val u = Uri.parse(uri)
+        if (u.scheme != "content" || u.authority != tree.authority) return false
+        return try {
+            val root = DocumentsContract.getTreeDocumentId(tree)
+            val id = DocumentsContract.getDocumentId(u)
+            id == root || id.startsWith("$root/")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun isInAppStorage(uri: String): Boolean {
         val u = Uri.parse(uri)
         return u.scheme == "file" && u.path?.startsWith(musicDir.absolutePath) == true
@@ -324,7 +347,9 @@ class Repository(private val context: Context, private val db: AppDatabase) {
      * Verschiebt alle Downloads aus dem App-Speicher in den gewaehlten Ordner.
      * Playlists, Lesezeichen und Fortschritt bleiben erhalten (die IDs aendern sich nicht).
      */
-    suspend fun moveDownloadsToTree(onProgress: (done: Int, total: Int) -> Unit): Int = withContext(Dispatchers.IO) {
+    suspend fun moveDownloadsToTree(onProgress: (done: Int, total: Int) -> Unit): Int = storeLock.withLock { moveDownloadsLocked(onProgress) }
+
+    private suspend fun moveDownloadsLocked(onProgress: (done: Int, total: Int) -> Unit): Int = withContext(Dispatchers.IO) {
         if (downloadTree == null) return@withContext 0
         val trackList = tracks.allOnce().filter { isInAppStorage(it.uri) }
         val chapterGroups = audiobooks.allChaptersOnce().filter { isInAppStorage(it.uri) }.groupBy { it.uri }
@@ -416,7 +441,7 @@ class Repository(private val context: Context, private val db: AppDatabase) {
     }
 
     companion object {
-        private val AUDIO_EXT = setOf("mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac", "wav")
+        val AUDIO_EXT = setOf("mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac", "wav")
 
         /** Sortiert "Kapitel 2" vor "Kapitel 10". */
         fun naturalCompare(a: String, b: String): Int {

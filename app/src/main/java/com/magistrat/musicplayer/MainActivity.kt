@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -48,6 +49,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Neue Dateien im gewaehlten Speicherort uebernehmen (z. B. am PC hineinkopiert)
+        lifecycleScope.launch {
+            val result = App.instance.folderScanner.scanIfDue()
+            if (!result.isEmpty) {
+                Toast.makeText(this@MainActivity, "Aus dem Ordner übernommen: ${result.describe()}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onStop() {
